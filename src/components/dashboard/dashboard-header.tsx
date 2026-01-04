@@ -1,8 +1,9 @@
 'use client'
 
 import { useParams } from 'next/navigation'
+import Link from 'next/link'
 import { useWorkspace } from '@/hooks/use-workspace'
-import { useUIStore } from '@/stores/ui-store'
+import { useUIStore, type ViewMode } from '@/stores/ui-store'
 import { SectionTabs } from './section-tabs'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,6 +16,8 @@ import {
   ChevronDown,
   RefreshCw,
   Smartphone,
+  Monitor,
+  Tablet,
   Maximize2,
   Download,
   ZoomIn,
@@ -34,15 +37,35 @@ import {
 export function DashboardHeader() {
   const params = useParams()
   const workspaceSlug = params?.workspaceSlug as string
-  const { workspace, isLoading } = useWorkspace()
+  const { workspace, isLoading, refetch } = useWorkspace()
   const activeSection = useUIStore((state) => state.activeSection)
+
+  // Website preview state
+  const selectedPage = useUIStore((state) => state.selectedPage)
+  const setSelectedPage = useUIStore((state) => state.setSelectedPage)
+  const viewMode = useUIStore((state) => state.viewMode)
+  const setViewMode = useUIStore((state) => state.setViewMode)
+  const websitePages = useUIStore((state) => state.websitePages)
+
+  // Cycle through view modes
+  const cycleViewMode = () => {
+    const modes: ViewMode[] = ['desktop', 'tablet', 'mobile']
+    const currentIndex = modes.indexOf(viewMode)
+    const nextIndex = (currentIndex + 1) % modes.length
+    setViewMode(modes[nextIndex])
+  }
+
+  // Get icon for current view mode
+  const ViewModeIcon = viewMode === 'desktop' ? Monitor : viewMode === 'tablet' ? Tablet : Smartphone
 
   return (
     <header className="h-14 bg-white flex items-center px-2">
       {/* Left - Logo and Workspace Name (exactly 420px to match chat panel) */}
       <div className="w-[420px] flex-shrink-0 flex items-center gap-3 px-4">
         {/* Ernest Logo */}
-        <span className="font-serif text-2xl text-gray-900">ernest</span>
+        <Link href="/" className="font-serif text-2xl text-gray-900 hover:opacity-80 transition-opacity">
+          ernest
+        </Link>
 
         <span className="text-gray-300">/</span>
 
@@ -73,21 +96,34 @@ export function DashboardHeader() {
       {/* Preview Toolbar - centered, pill container */}
       <div className="flex-1 flex items-center justify-center">
         {activeSection !== 'settings' && (
-          <div className="flex items-center border border-gray-200 rounded-full px-3 py-1">
+          <div className="flex items-center border border-gray-200 rounded-full px-4 py-1.5">
             {/* Page dropdown - for website */}
             {activeSection === 'website' && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900 mr-2">
+                  <button className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-gray-900 mr-3">
                     <span className="text-gray-400">/</span>
-                    <span>home</span>
+                    <span>{websitePages.find(p => p.slug === selectedPage)?.title || selectedPage}</span>
                     <ChevronDown className="w-3 h-3 text-gray-400" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
-                  <DropdownMenuItem>home</DropdownMenuItem>
-                  <DropdownMenuItem>about</DropdownMenuItem>
-                  <DropdownMenuItem>contact</DropdownMenuItem>
+                  {websitePages.length > 0 ? (
+                    websitePages.map((page) => (
+                      <DropdownMenuItem
+                        key={page.slug}
+                        onClick={() => setSelectedPage(page.slug)}
+                      >
+                        {page.title}
+                      </DropdownMenuItem>
+                    ))
+                  ) : (
+                    <>
+                      <DropdownMenuItem onClick={() => setSelectedPage('home')}>Home</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setSelectedPage('about')}>About</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => setSelectedPage('contact')}>Contact</DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -95,16 +131,28 @@ export function DashboardHeader() {
             {/* Website controls */}
             {activeSection === 'website' && (
               <>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-gray-500"
+                  onClick={() => refetch()}
+                  title="Refresh"
+                >
                   <RefreshCw className="w-3.5 h-3.5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500">
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500" title="Open in new tab">
                   <ExternalLink className="w-3.5 h-3.5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500">
-                  <Smartphone className="w-3.5 h-3.5" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-gray-500"
+                  onClick={cycleViewMode}
+                  title={`View mode: ${viewMode}`}
+                >
+                  <ViewModeIcon className="w-3.5 h-3.5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500">
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-gray-500" title="Fullscreen">
                   <Maximize2 className="w-3.5 h-3.5" />
                 </Button>
               </>

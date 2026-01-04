@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { ModelPicker } from '@/components/ui/model-picker'
 import { useModelStore } from '@/stores/model-store'
 import { createClient } from '@/lib/supabase/client'
+import type { User } from '@supabase/supabase-js'
 import {
   Sparkles,
   Globe,
@@ -16,14 +17,120 @@ import {
   GitBranch,
   MessageSquare,
   ArrowRight,
-  Plus
+  ArrowUpRight,
+  Plus,
+  Loader2,
+  LogOut,
+  FileText
 } from 'lucide-react'
+
+interface Workspace {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  updated_at: string
+  preview_url: string | null
+  tools_count: number
+  pages_count: number
+  website_status: 'draft' | 'live' | 'preview' | null
+}
+
+function getGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Morning'
+  if (hour < 17) return 'Afternoon'
+  return 'Evening'
+}
+
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+
+  if (diffInSeconds < 60) return 'just now'
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d ago`
+  return date.toLocaleDateString()
+}
 
 export default function Home() {
   const router = useRouter()
   const [prompt, setPrompt] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true)
+  const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false)
   const { selectedModel, setModel } = useModelStore()
+
+  // Check auth state and fetch workspaces on mount
+  useEffect(() => {
+    const fetchData = async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
+
+      if (user) {
+        // RLS handles filtering via workspace_members table
+        // Join with preview_sessions, websites, internal_tools, and website_pages
+        const { data: workspacesData, error } = await supabase
+          .from('workspaces')
+          .select(`
+            id, name, slug, business_description, updated_at,
+            preview_sessions!preview_sessions_workspace_id_fkey(preview_url, status),
+            websites(status),
+            internal_tools(id),
+            website_pages(id)
+          `)
+          .order('updated_at', { ascending: false })
+
+        if (error) {
+          console.error('Error fetching workspaces:', error)
+        }
+        setWorkspaces(workspacesData?.map(w => {
+          const sessions = w.preview_sessions as any[]
+          const activeSession = sessions?.find((s: any) => s.status === 'running')
+          const websites = w.websites as any[]
+          const tools = w.internal_tools as any[]
+          const pages = w.website_pages as any[]
+
+          // Determine website status
+          let websiteStatus: 'draft' | 'live' | 'preview' | null = null
+          if (activeSession) {
+            websiteStatus = 'preview'
+          } else if (websites?.[0]?.status === 'deployed') {
+            websiteStatus = 'live'
+          } else if (websites?.length > 0) {
+            websiteStatus = 'draft'
+          }
+
+          return {
+            id: w.id,
+            name: w.name,
+            slug: w.slug,
+            description: w.business_description,
+            updated_at: w.updated_at,
+            preview_url: activeSession?.preview_url || null,
+            tools_count: tools?.length || 0,
+            pages_count: pages?.length || 0,
+            website_status: websiteStatus
+          }
+        }) || [])
+      }
+
+      setIsLoadingAuth(false)
+    }
+    fetchData()
+  }, [])
+
+  const handleSignOut = async () => {
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    setUser(null)
+    setWorkspaces([])
+  }
 
   async function handleSubmit() {
     if (!prompt.trim()) return
@@ -35,29 +142,56 @@ export default function Home() {
       const { data: { user } } = await supabase.auth.getUser()
 
       if (user) {
-        // User is signed in - get their first workspace or create new
-        const { data: workspaces } = await supabase
-          .from('workspaces')
-          .select('slug')
-          .limit(1)
-          .single()
-
-        if (workspaces?.slug) {
-          // Redirect to dashboard with prompt
-          router.push(`/${workspaces.slug}?prompt=${encodeURIComponent(prompt)}`)
+        if (workspaces.length > 0) {
+          router.push(`/${workspaces[0].slug}?prompt=${encodeURIComponent(prompt)}`)
         } else {
-          // No workspace - go to create one
-          router.push(`/signup?prompt=${encodeURIComponent(prompt)}`)
+          const { data: newWorkspace, error } = await supabase
+            .from('workspaces')
+            .insert({
+              name: 'My Business',
+              slug: 'my-business-' + Date.now(),
+              description: 'Created from home',
+            })
+            .select()
+            .single()
+
+          if (error) throw error
+          router.push(`/${newWorkspace.slug}?prompt=${encodeURIComponent(prompt)}`)
         }
       } else {
-        // Not signed in - redirect to signup with prompt
-        router.push(`/signup?prompt=${encodeURIComponent(prompt)}`)
+        router.push(`/login?prompt=${encodeURIComponent(prompt)}`)
       }
     } catch (error) {
-      // If error, just go to signup
-      router.push(`/signup?prompt=${encodeURIComponent(prompt)}`)
+      router.push(`/login?prompt=${encodeURIComponent(prompt)}`)
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleCreateWorkspace = async () => {
+    setIsCreatingWorkspace(true)
+
+    try {
+      const supabase = createClient()
+      const timestamp = Date.now()
+
+      const { data: newWorkspace, error } = await supabase
+        .from('workspaces')
+        .insert({
+          name: 'New Project',
+          slug: `new-project-${timestamp}`,
+          description: null,
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      router.push(`/${newWorkspace.slug}`)
+    } catch (error) {
+      console.error('Error creating workspace:', error)
+    } finally {
+      setIsCreatingWorkspace(false)
     }
   }
 
@@ -68,6 +202,193 @@ export default function Home() {
     }
   }
 
+  const firstName = user?.user_metadata?.full_name?.split(' ')[0] ||
+                    user?.email?.split('@')[0] ||
+                    'there'
+
+  // Show loading state
+  if (isLoadingAuth) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#c8ff00]" />
+      </div>
+    )
+  }
+
+  // LOGGED IN VIEW - White background with greeting, prompt, and projects
+  if (user) {
+    return (
+      <div className="min-h-screen bg-white">
+        {/* Header */}
+        <header>
+          <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+            <span className="text-xl font-serif text-gray-900">Ernest</span>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-2 text-gray-500 hover:text-gray-900 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-sm">Sign out</span>
+            </button>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <div className="container mx-auto px-4">
+          {/* Greeting + Prompt - Centered vertically */}
+          <div className="flex flex-col items-center justify-center min-h-[50vh] py-12">
+            {/* Greeting */}
+            <div className="flex items-center justify-center gap-3 mb-10">
+              <span className="text-[#c8ff00] text-3xl">&#10042;</span>
+              <h1 className="text-4xl font-serif text-gray-900">
+                {getGreeting()}, {firstName}
+              </h1>
+            </div>
+
+            {/* Prompt Box */}
+            <div className="w-full max-w-2xl">
+              <div className="bg-[#1c1c1c] rounded-xl px-4 py-4">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="How can Ernest help you today?"
+                  className="w-full bg-transparent text-gray-200 placeholder-gray-500 text-base resize-none focus:outline-none min-h-[60px] max-h-40 font-serif"
+                  rows={2}
+                />
+                <div className="flex items-center justify-between pt-3">
+                  <div className="flex items-center gap-1">
+                    <button className="p-2 rounded-full bg-[#2a2a2a] hover:bg-[#3a3a3a] text-gray-400 transition-colors">
+                      <Plus className="w-4 h-4" />
+                    </button>
+                    <ModelPicker
+                      value={selectedModel}
+                      onChange={setModel}
+                      variant="compact"
+                    />
+                  </div>
+                  <button
+                    onClick={handleSubmit}
+                    disabled={isSubmitting || !prompt.trim()}
+                    className="w-8 h-8 aspect-square rounded-full flex items-center justify-center bg-[#c8ff00] text-gray-900 hover:bg-[#b8ef00] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isSubmitting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <ArrowUpRight className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Projects Section */}
+          <div className="w-full max-w-4xl mx-auto pb-16">
+            <h2 className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-4">
+              Your Projects
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {workspaces.map((workspace) => (
+                <Link key={workspace.id} href={`/${workspace.slug}`}>
+                  <div className="p-4 rounded-xl bg-gray-50 hover:bg-gray-100 transition-all border border-gray-200 hover:border-[#c8ff00]/50 group cursor-pointer">
+                    {/* Header: Name + Corner Preview */}
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <h3 className="font-medium text-gray-900 group-hover:text-[#9acd00] transition-colors">
+                        {workspace.name}
+                      </h3>
+                      {/* Corner Preview */}
+                      <div className="w-16 h-12 rounded-md bg-gray-200 overflow-hidden flex-shrink-0">
+                        {workspace.preview_url ? (
+                          <iframe
+                            src={workspace.preview_url}
+                            className="w-[400%] h-[400%] origin-top-left scale-[0.25] pointer-events-none"
+                            title={`${workspace.name} preview`}
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Globe className="w-4 h-4 text-gray-300" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Description */}
+                    <p className="text-sm text-gray-600 line-clamp-2 mb-3">
+                      {workspace.description || 'No description yet'}
+                    </p>
+
+                    {/* Metrics Row */}
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-100 text-xs text-gray-600">
+                        <Wrench className="w-3 h-3" />
+                        {workspace.tools_count} tools
+                      </span>
+                      <span className="inline-flex items-center gap-1 px-2 py-1 rounded bg-gray-100 text-xs text-gray-600">
+                        <FileText className="w-3 h-3" />
+                        {workspace.pages_count} pages
+                      </span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs ${
+                        workspace.website_status === 'live' ? 'bg-green-100 text-green-700' :
+                        workspace.website_status === 'preview' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-500'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${
+                          workspace.website_status === 'live' ? 'bg-green-500' :
+                          workspace.website_status === 'preview' ? 'bg-yellow-500' :
+                          'bg-gray-400'
+                        }`} />
+                        {workspace.website_status === 'live' ? 'Live' :
+                         workspace.website_status === 'preview' ? 'Preview' : 'Draft'}
+                      </span>
+                    </div>
+
+                    {/* Timestamp */}
+                    <p className="text-xs text-gray-400">
+                      Updated {formatRelativeTime(workspace.updated_at)}
+                    </p>
+                  </div>
+                </Link>
+              ))}
+
+              {/* New Project Card */}
+              <button
+                onClick={handleCreateWorkspace}
+                disabled={isCreatingWorkspace}
+                className="rounded-xl border-2 border-dashed border-gray-300 hover:border-[#c8ff00] transition-all flex flex-col items-center justify-center group disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ minHeight: '176px' }}
+              >
+                {isCreatingWorkspace ? (
+                  <Loader2 className="w-8 h-8 text-gray-400 animate-spin" />
+                ) : (
+                  <>
+                    <Plus className="w-8 h-8 text-gray-400 group-hover:text-[#9acd00] transition-colors" />
+                    <span className="text-sm text-gray-500 group-hover:text-gray-700 mt-2">
+                      New Project
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Empty State */}
+            {workspaces.length === 0 && (
+              <div className="text-center mt-8">
+                <p className="text-gray-600 mb-2">
+                  You don&apos;t have any projects yet.
+                </p>
+                <p className="text-gray-400 text-sm">
+                  Type in the prompt box above to create your first business, or click &quot;New Project&quot; to get started.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // LOGGED OUT VIEW - Original landing page
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white relative overflow-hidden">
       {/* Glowing arc decoration */}
@@ -120,33 +441,37 @@ export default function Home() {
 
         {/* Prompt Box */}
         <div className="w-full max-w-2xl">
-          <div className="bg-[#1a1a24] border border-white/10 rounded-2xl overflow-hidden shadow-2xl shadow-blue-500/10">
+          <div className="bg-[#2a2a2a] rounded-lg px-4 py-4">
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Let's build a business..."
-              className="w-full bg-transparent text-white placeholder-gray-500 p-4 min-h-[100px] resize-none focus:outline-none text-lg"
+              placeholder="How can ernest help you today?"
+              className="w-full bg-transparent text-gray-200 placeholder-gray-400 text-base resize-none focus:outline-none min-h-[60px] max-h-40 font-serif"
+              rows={2}
             />
-            <div className="flex items-center justify-between px-4 py-3 border-t border-white/10">
-              <div className="flex items-center gap-2">
-                <button className="p-2 rounded-lg hover:bg-white/10 transition-colors">
-                  <Plus className="w-5 h-5 text-gray-400" />
+            <div className="flex items-center justify-between pt-3">
+              <div className="flex items-center gap-1">
+                <button className="p-2 rounded-full bg-[#3a3a3a] hover:bg-[#444] text-gray-400 transition-colors">
+                  <Plus className="w-4 h-4" />
                 </button>
                 <ModelPicker
                   value={selectedModel}
                   onChange={setModel}
-                  variant="dark"
+                  variant="compact"
                 />
               </div>
-              <Button
+              <button
                 onClick={handleSubmit}
                 disabled={isSubmitting || !prompt.trim()}
-                className="bg-blue-500 hover:bg-blue-600 text-white gap-2"
+                className="w-8 h-8 aspect-square rounded-full flex items-center justify-center bg-[#c8ff00] text-gray-900 hover:bg-[#b8ef00] transition-colors disabled:opacity-50"
               >
-                {isSubmitting ? 'Starting...' : 'Build now'}
-                <ArrowRight className="w-4 h-4" />
-              </Button>
+                {isSubmitting ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <ArrowUpRight className="w-4 h-4" />
+                )}
+              </button>
             </div>
           </div>
         </div>

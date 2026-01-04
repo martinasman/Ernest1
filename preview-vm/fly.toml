@@ -1,0 +1,31 @@
+# Ernest Preview VM Configuration
+# This is the base configuration for preview machines
+
+app = "ernest-previews"
+primary_region = "arn"
+
+[build]
+
+[env]
+  NODE_ENV = "development"
+
+[http_service]
+  internal_port = 5173
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 3001
+
+  [[services.ports]]
+    port = 3001
+    handlers = ["http"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512

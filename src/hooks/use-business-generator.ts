@@ -4,29 +4,43 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useChatStore } from '@/stores/chat-store'
-import { useGenerationStore, GenerationTask, TaskProgress, getTaskDisplayName } from '@/stores/generation-store'
+import { useGenerationStore, GENERATION_STEPS, GenerationTask, TaskProgress, getTaskDisplayName } from '@/stores/generation-store'
+import { useModelStore } from '@/stores/model-store'
 
-async function runGenerationTask(
+// Endpoints for each generation task
+const TASK_ENDPOINTS: Record<GenerationTask, string> = {
+  plan: '/api/ai/generate/plan',
+  brand: '/api/ai/generate/brand',
+  website: '/api/ai/generate/website',
+  flow: '/api/ai/generate/flow',
+  tools: '/api/ai/generate/tools',
+}
+
+// Messages shown during each task
+const TASK_MESSAGES: Record<GenerationTask, { running: string; completed: string }> = {
+  plan: { running: 'Understanding your business...', completed: 'Business strategy ready' },
+  brand: { running: 'Creating brand identity...', completed: 'Brand identity complete' },
+  website: { running: 'Building website pages...', completed: 'Website pages ready' },
+  flow: { running: 'Mapping business flow...', completed: 'Business flow mapped' },
+  tools: { running: 'Suggesting internal tools...', completed: 'Tools suggested' },
+}
+
+// Run a single generation task
+async function runTask(
   task: GenerationTask,
   prompt: string,
   workspaceId: string,
+  model: string,
+  plan: unknown,
   updateTask: (task: GenerationTask, updates: Partial<TaskProgress>) => void
-): Promise<void> {
-  const endpoints: Record<GenerationTask, string> = {
-    brand: '/api/ai/generate/brand',
-    overview: '/api/ai/generate/overview',
-    website: '/api/ai/generate/website',
-    flow: '/api/ai/generate/flow',
-    tools: '/api/ai/generate/tools',
-  }
-
-  updateTask(task, { status: 'running', message: 'Generating...' })
+): Promise<unknown> {
+  updateTask(task, { status: 'running', message: TASK_MESSAGES[task].running })
 
   try {
-    const response = await fetch(endpoints[task], {
+    const response = await fetch(TASK_ENDPOINTS[task], {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, workspaceId }),
+      body: JSON.stringify({ prompt, workspaceId, model, plan }),
     })
 
     if (!response.ok) {
@@ -34,7 +48,14 @@ async function runGenerationTask(
       throw new Error(data.error || 'Generation failed')
     }
 
-    updateTask(task, { status: 'completed', message: 'Complete' })
+    const result = await response.json()
+    updateTask(task, { status: 'completed', message: TASK_MESSAGES[task].completed })
+
+    // Return the plan for subsequent tasks
+    if (task === 'plan') {
+      return result.plan
+    }
+    return result
   } catch (error) {
     updateTask(task, {
       status: 'error',
@@ -48,14 +69,15 @@ export function useBusinessGenerator() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
-  const { workspace } = useWorkspace()
+  const { workspace, refetch } = useWorkspace()
   const { setOpen, addMessage, updateMessage } = useChatStore()
   const { isGenerating, startGeneration, updateTask, completeGeneration } = useGenerationStore()
+  const { selectedModel } = useModelStore()
 
   const promptProcessed = useRef(false)
   const prompt = searchParams.get('prompt')
 
-  const runGeneration = useCallback(async (promptText: string, workspaceId: string) => {
+  const runGeneration = useCallback(async (promptText: string, workspaceId: string, model: string) => {
     // Open chat panel
     setOpen(true)
 
@@ -64,62 +86,73 @@ export function useBusinessGenerator() {
     addMessage({
       id: messageId,
       role: 'assistant',
-      content: `Building your business: "${promptText}"\n\nGenerating all components in parallel...`,
+      content: `Building your business: "${promptText}"`,
       status: 'streaming',
       createdAt: new Date(),
     })
 
     startGeneration(promptText)
 
-    // Define all tasks
-    const tasks: GenerationTask[] = ['brand', 'overview', 'website', 'flow', 'tools']
-
     // Update message with progress periodically
     const progressInterval = setInterval(() => {
       const state = useGenerationStore.getState()
-      const progressLines = Object.values(state.tasks).map((t) => {
-        const icon = t.status === 'completed' ? '✓' :
-          t.status === 'running' ? '⏳' :
-          t.status === 'error' ? '✗' : '○'
-        return `${icon} **${getTaskDisplayName(t.task)}**: ${t.message}`
-      })
+      const currentTask = GENERATION_STEPS[state.currentStep]
+      const currentTaskInfo = state.tasks[currentTask]
+
+      // Show only the current task that's running
+      let statusText = ''
+      if (currentTaskInfo.status === 'running') {
+        statusText = `⏳ ${getTaskDisplayName(currentTask)}: ${currentTaskInfo.message}`
+      } else if (currentTaskInfo.status === 'completed') {
+        // Show completed count
+        const completedCount = GENERATION_STEPS.filter(t => state.tasks[t].status === 'completed').length
+        statusText = `✓ ${completedCount}/${GENERATION_STEPS.length} complete`
+      }
 
       updateMessage(messageId, {
-        content: `Building your business: "${promptText}"\n\n${progressLines.join('\n')}`,
+        content: `Building your business: "${promptText}"\n\n${statusText}`,
       })
     }, 500)
 
+    let plan: unknown = null
+    let errorCount = 0
+
     try {
-      // Run all tasks in parallel
-      await Promise.allSettled(
-        tasks.map((task) =>
-          runGenerationTask(task, promptText, workspaceId, updateTask)
-        )
-      )
+      // Run tasks SEQUENTIALLY - one at a time
+      for (const task of GENERATION_STEPS) {
+        try {
+          const result = await runTask(task, promptText, workspaceId, model, plan, updateTask)
+          if (task === 'plan') {
+            plan = result
+          }
+        } catch {
+          errorCount++
+          // Continue to next task even if one fails
+        }
+      }
     } finally {
       clearInterval(progressInterval)
       completeGeneration()
 
+      // Refetch workspace to get updated data
+      refetch()
+
       // Check final status
       const finalState = useGenerationStore.getState()
-      const completedCount = Object.values(finalState.tasks).filter(
-        (t) => t.status === 'completed'
-      ).length
-      const errorCount = Object.values(finalState.tasks).filter(
-        (t) => t.status === 'error'
-      ).length
+      const completedCount = GENERATION_STEPS.filter(t => finalState.tasks[t].status === 'completed').length
+      const totalTasks = GENERATION_STEPS.length
 
       // Final message
       if (errorCount === 0) {
         updateMessage(messageId, {
-          content: `✨ **Your business is ready!**\n\nI've generated:\n- Brand identity (colors, fonts, tone)\n- Business model & overview\n- Website content (Home, About, Contact)\n- Business flow diagram\n- Internal tools\n\nExplore the sidebar to see everything, or ask me to make changes!`,
+          content: `✨ **Your business is ready!**\n\nI've generated:\n- Business Strategy\n- Brand Identity\n- Website Pages\n- Business Flow\n- Tool Suggestions\n\nExplore the sidebar to see everything!`,
           status: 'complete',
         })
       } else {
         updateMessage(messageId, {
-          content: `⚠️ **Partially complete** (${completedCount}/${tasks.length} succeeded)\n\nSome components failed to generate. You can ask me to retry the failed ones:\n${Object.values(finalState.tasks)
-            .filter((t) => t.status === 'error')
-            .map((t) => `- ${getTaskDisplayName(t.task)}: ${t.message}`)
+          content: `⚠️ **Partially complete** (${completedCount}/${totalTasks} succeeded)\n\nSome components failed:\n${GENERATION_STEPS
+            .filter(t => finalState.tasks[t].status === 'error')
+            .map(t => `- ${getTaskDisplayName(t)}: ${finalState.tasks[t].message}`)
             .join('\n')}`,
           status: 'complete',
         })
@@ -129,14 +162,14 @@ export function useBusinessGenerator() {
       const newUrl = pathname
       router.replace(newUrl, { scroll: false })
     }
-  }, [setOpen, addMessage, startGeneration, updateTask, completeGeneration, updateMessage, router, pathname])
+  }, [setOpen, addMessage, startGeneration, updateTask, completeGeneration, updateMessage, router, pathname, refetch])
 
   useEffect(() => {
     if (prompt && workspace?.id && !promptProcessed.current && !isGenerating) {
       promptProcessed.current = true
-      runGeneration(prompt, workspace.id)
+      runGeneration(prompt, workspace.id, selectedModel)
     }
-  }, [prompt, workspace?.id, isGenerating, runGeneration])
+  }, [prompt, workspace?.id, isGenerating, runGeneration, selectedModel])
 
   return { isGenerating, prompt }
 }

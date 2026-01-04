@@ -1,66 +1,53 @@
-import { generateObject } from 'ai'
-import { openrouter, getModelId, DEFAULT_MODEL } from '@/lib/ai/openrouter'
 import { createClient } from '@/lib/supabase/server'
-import { z } from 'zod'
-
-const WebsiteSchema = z.object({
-  pages: z.array(z.object({
-    slug: z.string().describe('URL path like "home", "about", "contact"'),
-    title: z.string().describe('Page title'),
-    description: z.string().describe('Meta description for SEO'),
-    sections: z.array(z.object({
-      type: z.enum(['hero', 'features', 'cta', 'testimonials', 'faq', 'team', 'pricing', 'contact', 'about', 'gallery']),
-      headline: z.string(),
-      subheadline: z.string().optional(),
-      content: z.string().optional(),
-      items: z.array(z.object({
-        title: z.string(),
-        description: z.string(),
-        icon: z.string().optional(),
-      })).optional(),
-    })),
-  })),
-})
+import { generateWebsite, type Website } from '@/lib/ai/generation'
+import type { BusinessPlan } from '@/lib/ai/generation'
 
 export async function POST(req: Request) {
   try {
-    const { prompt, workspaceId, model } = await req.json()
+    const { prompt, workspaceId, model, plan: providedPlan } = await req.json()
 
     if (!workspaceId) {
       return Response.json({ error: 'Missing workspaceId' }, { status: 400 })
     }
 
     const supabase = await createClient()
-    const modelId = getModelId(model || DEFAULT_MODEL)
 
-    // Get brand info for context
+    // Get the plan from the request or fetch from workspace ai_context
+    let plan: BusinessPlan | null = providedPlan
+
+    if (!plan) {
+      const { data: workspace } = await supabase
+        .from('workspaces')
+        .select('ai_context')
+        .eq('id', workspaceId)
+        .single()
+
+      plan = (workspace?.ai_context as { businessPlan?: BusinessPlan })?.businessPlan || null
+    }
+
+    if (!plan) {
+      return Response.json(
+        { error: 'No business plan found. Generate a plan first.' },
+        { status: 400 }
+      )
+    }
+
+    // Fetch brand data from brands table
     const { data: brand } = await supabase
       .from('brands')
-      .select('name, tagline, tone_of_voice')
+      .select('*')
       .eq('workspace_id', workspaceId)
       .single()
 
-    const { object: website } = await generateObject({
-      model: openrouter(modelId),
-      schema: WebsiteSchema,
-      system: `You are a web designer creating website content for a business.
+    // Fetch overview data from overviews table
+    const { data: overview } = await supabase
+      .from('overviews')
+      .select('*')
+      .eq('workspace_id', workspaceId)
+      .single()
 
-${brand ? `
-Brand: ${brand.name}
-Tagline: ${brand.tagline}
-Tone: ${brand.tone_of_voice}
-` : ''}
-
-Create website pages that:
-1. Have compelling, clear headlines
-2. Use persuasive but authentic copy
-3. Include relevant sections for each page type
-4. Are optimized for conversions
-5. Match the brand's tone of voice
-
-Generate at least Home, About, and Contact pages.`,
-      prompt: `Create website content for: "${prompt}"`,
-    })
+    // Generate website using the new pipeline with brand and overview context
+    const website = await generateWebsite(plan, brand, overview, model)
 
     // Store in workspace ai_context
     const { data: workspace } = await supabase
@@ -87,7 +74,11 @@ Generate at least Home, About, and Contact pages.`,
       return Response.json({ error: error.message }, { status: 500 })
     }
 
-    return Response.json({ website })
+    return Response.json({
+      website,
+      pageCount: website.pages.length,
+      pages: website.pages.map(p => ({ slug: p.slug, title: p.title }))
+    })
   } catch (error) {
     console.error('Website generation error:', error)
     return Response.json(

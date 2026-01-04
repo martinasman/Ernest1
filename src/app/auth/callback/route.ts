@@ -33,8 +33,8 @@ export async function GET(request: Request) {
       const workspace = member?.workspaces as any
 
       if (workspace?.slug) {
-        // User has a workspace, redirect there
-        return NextResponse.redirect(`${origin}/${workspace.slug}/overview`)
+        // User has a workspace, redirect to main page
+        return NextResponse.redirect(`${origin}/`)
       }
 
       // New user via OAuth - create workspace using admin client (bypasses RLS)
@@ -75,7 +75,8 @@ export async function GET(request: Request) {
         workspace_id: newWorkspace.id,
       })
 
-      return NextResponse.redirect(`${origin}/${slug}/overview`)
+      // Redirect to main page after OAuth signup
+      return NextResponse.redirect(`${origin}/`)
     }
   }
 

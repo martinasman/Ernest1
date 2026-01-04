@@ -44,6 +44,17 @@ export async function POST(req: Request) {
     const supabase = await createClient()
     const modelId = getModelId(model || DEFAULT_MODEL)
 
+    // CRITICAL: Delete existing tools for this workspace before generating new ones
+    // This prevents tools from accumulating across multiple generation sessions
+    const { error: deleteError } = await supabase
+      .from('internal_tools')
+      .delete()
+      .eq('workspace_id', workspaceId)
+
+    if (deleteError) {
+      console.error('Failed to delete existing tools:', deleteError)
+    }
+
     // Get overview for context
     const { data: overview } = await supabase
       .from('overviews')

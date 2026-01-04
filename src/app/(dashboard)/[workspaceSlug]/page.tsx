@@ -35,6 +35,28 @@ export default function DashboardPage() {
     )
   }
 
+  // Check if workspace has any generated content
+  const isEmptyWorkspace =
+    (!tools || tools.length === 0) &&
+    !overview?.unique_value_proposition &&
+    (!brand || brand.name === 'My Business')
+
+  // Show clean empty state when nothing has been generated
+  if (isEmptyWorkspace) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] p-6">
+        <div className="text-center max-w-md">
+          <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+            What kind of business do you want to create?
+          </h1>
+          <p className="text-gray-500 text-sm">
+            Use the chat on the right to describe your business and Ernest will generate everything for you.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const quickLinks = [
     {
       title: 'Overview',

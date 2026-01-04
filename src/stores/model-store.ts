@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { OpenRouterModel, DEFAULT_MODEL } from '@/lib/ai/openrouter'
+import { OpenRouterModel, DEFAULT_MODEL, OPENROUTER_MODELS } from '@/lib/ai/openrouter'
 
 interface ModelState {
   selectedModel: OpenRouterModel
@@ -15,6 +15,16 @@ export const useModelStore = create<ModelState>()(
     }),
     {
       name: 'ernest-model-preference',
+      // Migrate old model selections to new model IDs
+      migrate: (persistedState: unknown) => {
+        const state = persistedState as { selectedModel?: string }
+        if (state?.selectedModel && !(state.selectedModel in OPENROUTER_MODELS)) {
+          // Old model ID not valid anymore, reset to default
+          return { selectedModel: DEFAULT_MODEL }
+        }
+        return state as ModelState
+      },
+      version: 1,
     }
   )
 )

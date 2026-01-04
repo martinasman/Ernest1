@@ -1,12 +1,9 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 
-export type GenerationTask =
-  | 'brand'
-  | 'overview'
-  | 'website'
-  | 'flow'
-  | 'tools'
+// Generation steps in order - extensible array
+export const GENERATION_STEPS = ['plan', 'brand', 'website', 'flow', 'tools'] as const
+export type GenerationTask = typeof GENERATION_STEPS[number]
 
 export interface TaskProgress {
   task: GenerationTask
@@ -18,6 +15,7 @@ export interface TaskProgress {
 interface GenerationState {
   isGenerating: boolean
   prompt: string | null
+  currentStep: number // Index into GENERATION_STEPS
   tasks: Record<GenerationTask, TaskProgress>
 
   // Actions
@@ -28,8 +26,8 @@ interface GenerationState {
 }
 
 const createInitialTasks = (): Record<GenerationTask, TaskProgress> => ({
+  plan: { task: 'plan', status: 'pending', message: 'Waiting...' },
   brand: { task: 'brand', status: 'pending', message: 'Waiting...' },
-  overview: { task: 'overview', status: 'pending', message: 'Waiting...' },
   website: { task: 'website', status: 'pending', message: 'Waiting...' },
   flow: { task: 'flow', status: 'pending', message: 'Waiting...' },
   tools: { task: 'tools', status: 'pending', message: 'Waiting...' },
@@ -39,16 +37,22 @@ export const useGenerationStore = create<GenerationState>()(
   immer((set) => ({
     isGenerating: false,
     prompt: null,
+    currentStep: 0,
     tasks: createInitialTasks(),
 
     startGeneration: (prompt) => set((state) => {
       state.isGenerating = true
       state.prompt = prompt
+      state.currentStep = 0
       state.tasks = createInitialTasks()
     }),
 
     updateTask: (task, updates) => set((state) => {
       Object.assign(state.tasks[task], updates)
+      // Update currentStep based on which task is running
+      if (updates.status === 'running') {
+        state.currentStep = GENERATION_STEPS.indexOf(task)
+      }
     }),
 
     completeGeneration: () => set({ isGenerating: false }),
@@ -56,6 +60,7 @@ export const useGenerationStore = create<GenerationState>()(
     reset: () => set({
       isGenerating: false,
       prompt: null,
+      currentStep: 0,
       tasks: createInitialTasks()
     })
   }))
@@ -64,9 +69,9 @@ export const useGenerationStore = create<GenerationState>()(
 // Helper to get task display name
 export function getTaskDisplayName(task: GenerationTask): string {
   const names: Record<GenerationTask, string> = {
+    plan: 'Business Strategy',
     brand: 'Brand Identity',
-    overview: 'Business Model',
-    website: 'Website Pages',
+    website: 'Website',
     flow: 'Business Flow',
     tools: 'Internal Tools'
   }

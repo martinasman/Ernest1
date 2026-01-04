@@ -1,67 +1,75 @@
-import { generateObject } from 'ai'
-import { openrouter, getModelId, DEFAULT_MODEL } from '@/lib/ai/openrouter'
 import { createClient } from '@/lib/supabase/server'
-import { z } from 'zod'
-
-const BrandSchema = z.object({
-  name: z.string().describe('Business name'),
-  tagline: z.string().describe('Short catchy tagline'),
-  colors: z.object({
-    primary: z.string().describe('Primary color hex code'),
-    secondary: z.string().describe('Secondary color hex code'),
-    accent: z.string().describe('Accent color hex code'),
-    background: z.string().describe('Background color hex code'),
-    foreground: z.string().describe('Text/foreground color hex code'),
-  }),
-  fonts: z.object({
-    heading: z.string().describe('Google Font name for headings'),
-    body: z.string().describe('Google Font name for body text'),
-  }),
-  tone_of_voice: z.enum(['professional', 'friendly', 'playful', 'authoritative', 'casual']),
-  brand_values: z.array(z.string()).describe('3-5 core brand values'),
-  border_radius: z.enum(['none', 'sm', 'md', 'lg', 'full']),
-})
+import { generateBrand, type Brand } from '@/lib/ai/generation'
+import type { BusinessPlan } from '@/lib/ai/generation'
 
 export async function POST(req: Request) {
   try {
-    const { prompt, workspaceId, model } = await req.json()
+    const { prompt, workspaceId, model, plan: providedPlan } = await req.json()
 
     if (!workspaceId) {
       return Response.json({ error: 'Missing workspaceId' }, { status: 400 })
     }
 
     const supabase = await createClient()
-    const modelId = getModelId(model || DEFAULT_MODEL)
 
-    const { object: brand } = await generateObject({
-      model: openrouter(modelId),
-      schema: BrandSchema,
-      system: `You are a brand strategist creating a compelling brand identity for a new business.
+    // Get the plan from the request or fetch from workspace ai_context
+    let plan: BusinessPlan | null = providedPlan
 
-Create a modern, memorable brand that:
-1. Has a clear, professional business name (not generic)
-2. Uses a harmonious color palette with proper contrast
-3. Selects appropriate typography from Google Fonts
-4. Defines a consistent tone of voice
-5. Establishes 3-5 meaningful brand values
+    if (!plan) {
+      const { data: workspace } = await supabase
+        .from('workspaces')
+        .select('ai_context')
+        .eq('id', workspaceId)
+        .single()
 
-Use hex color codes (e.g., #2563eb). For fonts, use actual Google Font names like "Inter", "Poppins", "Playfair Display".`,
-      prompt: `Create a complete brand identity for this business concept: "${prompt}"`,
-    })
+      plan = (workspace?.ai_context as { businessPlan?: BusinessPlan })?.businessPlan || null
+    }
+
+    if (!plan) {
+      return Response.json(
+        { error: 'No business plan found. Generate a plan first.' },
+        { status: 400 }
+      )
+    }
+
+    // Generate brand using the new pipeline
+    const brand = await generateBrand(plan, undefined, model)
+
+    // Map to database schema (the new brand has more fields)
+    const dbBrand = {
+      name: brand.name,
+      tagline: brand.tagline,
+      colors: {
+        primary: brand.colors.primary,
+        primaryLight: brand.colors.primaryLight,
+        primaryDark: brand.colors.primaryDark,
+        secondary: brand.colors.secondary,
+        secondaryLight: brand.colors.secondaryLight,
+        accent: brand.colors.accent,
+        background: brand.colors.background,
+        foreground: brand.colors.foreground,
+        muted: brand.colors.muted,
+        mutedForeground: brand.colors.mutedForeground,
+        success: brand.colors.success,
+        warning: brand.colors.warning,
+        destructive: brand.colors.destructive,
+      },
+      fonts: {
+        heading: brand.fonts.heading,
+        headingWeight: brand.fonts.headingWeight,
+        body: brand.fonts.body,
+        bodyWeight: brand.fonts.bodyWeight,
+      },
+      tone_of_voice: brand.toneOfVoice.formality,
+      brand_values: brand.values,
+      border_radius: brand.borderRadius,
+      updated_at: new Date().toISOString(),
+    }
 
     // Save to database
     const { data: savedBrand, error } = await supabase
       .from('brands')
-      .update({
-        name: brand.name,
-        tagline: brand.tagline,
-        colors: brand.colors,
-        fonts: brand.fonts,
-        tone_of_voice: brand.tone_of_voice,
-        brand_values: brand.brand_values,
-        border_radius: brand.border_radius,
-        updated_at: new Date().toISOString(),
-      })
+      .update(dbBrand)
       .eq('workspace_id', workspaceId)
       .select()
       .single()
@@ -76,12 +84,12 @@ Use hex color codes (e.g., #2563eb). For fonts, use actual Google Font names lik
       .from('workspaces')
       .update({
         name: brand.name,
-        business_description: prompt,
+        business_description: prompt || plan.business.description,
         updated_at: new Date().toISOString(),
       })
       .eq('id', workspaceId)
 
-    return Response.json({ brand: savedBrand })
+    return Response.json({ brand: savedBrand, fullBrand: brand })
   } catch (error) {
     console.error('Brand generation error:', error)
     return Response.json(

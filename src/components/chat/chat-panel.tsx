@@ -1,15 +1,17 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { ArrowUpRight, Loader2, Bot, User, MousePointer2, Plus, Lightbulb } from 'lucide-react'
+import { ArrowUpRight, Loader2, Bot, User, MousePointer2, Plus, Lightbulb, X, Pencil } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useChatStore } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
-import { useGenerationStore, getTaskDisplayName, type GenerationTask } from '@/stores/generation-store'
+import { useUIStore, type WebsiteSelection, type OverviewSelection } from '@/stores/ui-store'
+import { useGenerationStore, getTaskDisplayName, GENERATION_STEPS } from '@/stores/generation-store'
 import { ModelPicker } from '@/components/ui/model-picker'
 import { InlineTodoList, type TodoItem } from './inline-todo-list'
+import { getSectionDisplayName } from '@/lib/ai/generation/website-generator'
 
 interface Message {
   id: string
@@ -19,7 +21,7 @@ interface Message {
 }
 
 export function ChatPanel() {
-  const { workspace } = useWorkspace()
+  const { workspace, refetch } = useWorkspace()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [localMessages, setLocalMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -27,9 +29,27 @@ export function ChatPanel() {
   const [error, setError] = useState<string | null>(null)
   const { selectedModel, setModel } = useModelStore()
 
+  // Selection state for contextual editing
+  const selectedElement = useUIStore((state) => state.selectedElement)
+  const clearSelection = useUIStore((state) => state.clearSelection)
+
   // Get generation tasks for inline todo display
   const generationTasks = useGenerationStore((state) => state.tasks)
   const isGenerating = useGenerationStore((state) => state.isGenerating)
+
+  // Get display name for selected element
+  const getEditingLabel = () => {
+    if (!selectedElement) return null
+    if (selectedElement.type === 'website') {
+      const ws = selectedElement as WebsiteSelection
+      return getSectionDisplayName(ws.sectionType as Parameters<typeof getSectionDisplayName>[0])
+    }
+    if (selectedElement.type === 'overview') {
+      const os = selectedElement as OverviewSelection
+      return os.fieldLabel
+    }
+    return null
+  }
 
   // Get messages from the chat store (used by business generator)
   const storeMessages = useChatStore((state) => state.messages)
@@ -45,8 +65,7 @@ export function ChatPanel() {
   ]
 
   // Convert generation tasks to todo items
-  const taskOrder: GenerationTask[] = ['brand', 'overview', 'website', 'flow', 'tools']
-  const currentTodos: TodoItem[] = taskOrder.map((taskKey) => {
+  const currentTodos: TodoItem[] = GENERATION_STEPS.map((taskKey) => {
     const task = generationTasks[taskKey]
     return {
       content: getTaskDisplayName(taskKey),
@@ -77,17 +96,97 @@ export function ChatPanel() {
     setError(null)
 
     try {
+      // Check if we're editing a website section
+      if (selectedElement?.type === 'website') {
+        const ws = selectedElement as WebsiteSelection
+        const editingLabel = getEditingLabel()
+
+        // Call the edit-section API
+        const response = await fetch('/api/ai/edit-section', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceId: workspace.id,
+            pageSlug: ws.pageSlug,
+            sectionIndex: ws.sectionIndex,
+            prompt: input.trim(),
+            model: selectedModel,
+          })
+        })
+
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error || 'Failed to update section')
+        }
+
+        // Add success message
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `Updated the ${editingLabel}. The changes have been applied.`
+        }
+        setLocalMessages(prev => [...prev, assistantMessage])
+
+        // Refetch workspace to get updated data
+        refetch()
+
+        // Clear selection after successful edit
+        clearSelection()
+        return
+      }
+
+      // Check if we're editing an overview field
+      if (selectedElement?.type === 'overview') {
+        const os = selectedElement as OverviewSelection
+        const editingLabel = getEditingLabel()
+
+        // Call the edit-overview API
+        const response = await fetch('/api/ai/edit-overview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceId: workspace.id,
+            field: os.field,
+            prompt: input.trim(),
+            model: selectedModel,
+          })
+        })
+
+        if (!response.ok) {
+          const error = await response.json()
+          throw new Error(error.error || 'Failed to update field')
+        }
+
+        // Add success message
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: `Updated ${editingLabel}. The changes have been applied.`
+        }
+        setLocalMessages(prev => [...prev, assistantMessage])
+
+        // Refetch workspace to get updated data
+        refetch()
+
+        // Clear selection after successful edit
+        clearSelection()
+        return
+      }
+
+      // Regular chat flow
+      const requestBody: Record<string, unknown> = {
+        messages: [...localMessages, userMessage].map(m => ({
+          role: m.role,
+          content: m.content
+        })),
+        workspaceId: workspace.id,
+        model: selectedModel
+      }
+
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [...localMessages, userMessage].map(m => ({
-            role: m.role,
-            content: m.content
-          })),
-          workspaceId: workspace.id,
-          model: selectedModel
-        })
+        body: JSON.stringify(requestBody)
       })
 
       if (!response.ok) {
@@ -212,6 +311,24 @@ export function ChatPanel() {
 
       {/* Input Area */}
       <div className="p-4">
+        {/* Editing Context Badge */}
+        {selectedElement && (
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-500/20 border border-blue-500/30 rounded-full">
+              <Pencil className="w-3 h-3 text-blue-400" />
+              <span className="text-xs text-blue-400 font-medium">
+                Editing: {getEditingLabel()}
+              </span>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="ml-1 p-0.5 hover:bg-blue-500/20 rounded-full transition-colors"
+              >
+                <X className="w-3 h-3 text-blue-400" />
+              </button>
+            </div>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="relative">
           <div className="bg-[#2a2a2a] rounded-lg px-4 py-4">
             <textarea

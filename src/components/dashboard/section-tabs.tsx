@@ -13,6 +13,7 @@ import {
   LayoutGrid,
   Plus,
   Pin,
+  Code2,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -33,6 +34,7 @@ const allTabs: TabItem[] = [
   { id: 'brand', label: 'Brand', icon: Palette },
   { id: 'flow', label: 'Flow', icon: GitBranch },
   { id: 'internal', label: 'Internal', icon: Wrench },
+  { id: 'code', label: 'Code', icon: Code2 },
   { id: 'settings', label: 'Settings', icon: Settings },
 ]
 

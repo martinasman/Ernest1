@@ -33,21 +33,8 @@ export default function LoginPage() {
       return
     }
 
-    // Get user's first workspace
-    const { data: member } = await supabase
-      .from('workspace_members')
-      .select('workspaces(slug)')
-      .eq('user_id', data.user.id)
-      .limit(1)
-      .single()
-
-    const workspace = member?.workspaces as any
-
-    if (workspace?.slug) {
-      router.push(`/${workspace.slug}/overview`)
-    } else {
-      router.push('/onboarding')
-    }
+    // Redirect to main page after login - user can prompt from there
+    router.push('/')
   }
 
   return (

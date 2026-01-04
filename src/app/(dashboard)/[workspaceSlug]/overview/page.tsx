@@ -1,12 +1,162 @@
 'use client'
 
+import { useEffect, useCallback } from 'react'
 import { useWorkspace } from '@/hooks/use-workspace'
+import { useGenerationStore, getTaskDisplayName, GENERATION_STEPS } from '@/stores/generation-store'
+import { useUIStore, type OverviewSelection } from '@/stores/ui-store'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
+import { Loader2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+// Lean canvas field definitions for selection
+const OVERVIEW_FIELDS = {
+  problems: 'Problems',
+  solutions: 'Solutions',
+  unique_value_proposition: 'Unique Value Proposition',
+  unfair_advantage: 'Unfair Advantage',
+  customer_segments: 'Customer Segments',
+  key_metrics: 'Key Metrics',
+  channels: 'Channels',
+  cost_structure: 'Cost Structure',
+  revenue_streams: 'Revenue Streams',
+} as const
 
 export default function OverviewPage() {
   const { overview, isLoading } = useWorkspace()
+  const isGenerating = useGenerationStore((state) => state.isGenerating)
+  const tasks = useGenerationStore((state) => state.tasks)
+  const currentStep = useGenerationStore((state) => state.currentStep)
+
+  // Selection state for editing
+  const selectedElement = useUIStore((state) => state.selectedElement)
+  const setSelectedElement = useUIStore((state) => state.setSelectedElement)
+  const clearSelection = useUIStore((state) => state.clearSelection)
+
+  // Handle field selection
+  const handleFieldSelect = useCallback((field: keyof typeof OVERVIEW_FIELDS) => {
+    setSelectedElement({
+      type: 'overview',
+      field,
+      fieldLabel: OVERVIEW_FIELDS[field],
+    } as OverviewSelection)
+  }, [setSelectedElement])
+
+  // Check if a field is selected
+  const isFieldSelected = (field: string) => {
+    if (!selectedElement || selectedElement.type !== 'overview') return false
+    return (selectedElement as OverviewSelection).field === field
+  }
+
+  // Handle Escape key to clear selection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        clearSelection()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [clearSelection])
+
+  // Show generating state
+  if (isGenerating) {
+    const currentTask = GENERATION_STEPS[currentStep]
+    const completedCount = GENERATION_STEPS.filter(t => tasks[t]?.status === 'completed').length
+    const progress = (completedCount / GENERATION_STEPS.length) * 100
+
+    return (
+      <div className="p-6 flex flex-col items-center justify-center min-h-[60vh]">
+        <div className="text-center space-y-6">
+          {/* Animated Logo/Spinner Container */}
+          <div className="relative">
+            {/* Outer pulsing ring */}
+            <div className="absolute inset-0 w-24 h-24 mx-auto rounded-full bg-primary/20 animate-ping" style={{ animationDuration: '2s' }} />
+            {/* Inner glowing ring */}
+            <div className="absolute inset-2 w-20 h-20 mx-auto rounded-full bg-primary/10 animate-pulse" />
+            {/* Main spinner */}
+            <div className="relative w-24 h-24 mx-auto flex items-center justify-center">
+              <Loader2 className="w-16 h-16 animate-spin text-primary" />
+            </div>
+          </div>
+
+          {/* Title and current task */}
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+              Building Your Business
+            </h2>
+            <p className="text-lg text-muted-foreground">
+              {currentTask ? getTaskDisplayName(currentTask) : 'Starting...'}
+            </p>
+          </div>
+
+          {/* Progress bar */}
+          <div className="w-64 mx-auto">
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-primary to-primary/80 rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">
+              {completedCount} of {GENERATION_STEPS.length} steps complete
+            </p>
+          </div>
+
+          {/* Task list with enhanced styling */}
+          <div className="flex flex-col gap-3 mt-4 max-w-sm mx-auto">
+            {GENERATION_STEPS.map((task, index) => {
+              const taskInfo = tasks[task]
+              const isCompleted = taskInfo?.status === 'completed'
+              const isRunning = taskInfo?.status === 'running'
+              const isPending = !isCompleted && !isRunning
+
+              return (
+                <div
+                  key={task}
+                  className={cn(
+                    'flex items-center gap-3 px-4 py-2 rounded-lg transition-all duration-300',
+                    isCompleted && 'bg-green-500/10',
+                    isRunning && 'bg-primary/10 scale-105',
+                    isPending && 'opacity-50'
+                  )}
+                >
+                  {/* Status indicator */}
+                  <div className={cn(
+                    'w-6 h-6 rounded-full flex items-center justify-center transition-all',
+                    isCompleted && 'bg-green-500 text-white',
+                    isRunning && 'bg-primary text-white',
+                    isPending && 'border-2 border-muted-foreground/30'
+                  )}>
+                    {isCompleted ? (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : isRunning ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <span className="text-xs text-muted-foreground">{index + 1}</span>
+                    )}
+                  </div>
+
+                  {/* Task name */}
+                  <span className={cn(
+                    'text-sm font-medium',
+                    isCompleted && 'text-green-600',
+                    isRunning && 'text-primary',
+                    isPending && 'text-muted-foreground'
+                  )}>
+                    {getTaskDisplayName(task)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (isLoading) {
     return (
@@ -37,7 +187,13 @@ export default function OverviewPage() {
       {/* Lean Canvas Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Problem */}
-        <Card className="lg:col-span-1 lg:row-span-2">
+        <Card
+          className={cn(
+            'lg:col-span-1 lg:row-span-2 cursor-pointer transition-all duration-200',
+            isFieldSelected('problems') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('problems')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Problem
@@ -66,7 +222,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Solution */}
-        <Card className="lg:col-span-1 lg:row-span-2">
+        <Card
+          className={cn(
+            'lg:col-span-1 lg:row-span-2 cursor-pointer transition-all duration-200',
+            isFieldSelected('solutions') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('solutions')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Solution
@@ -89,7 +251,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Unique Value Proposition */}
-        <Card className="lg:col-span-1 lg:row-span-2 bg-primary/5">
+        <Card
+          className={cn(
+            'lg:col-span-1 lg:row-span-2 bg-primary/5 cursor-pointer transition-all duration-200',
+            isFieldSelected('unique_value_proposition') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('unique_value_proposition')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Unique Value Proposition
@@ -108,7 +276,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Unfair Advantage */}
-        <Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all duration-200',
+            isFieldSelected('unfair_advantage') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('unfair_advantage')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Unfair Advantage
@@ -122,7 +296,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Customer Segments */}
-        <Card className="lg:row-span-2">
+        <Card
+          className={cn(
+            'lg:row-span-2 cursor-pointer transition-all duration-200',
+            isFieldSelected('customer_segments') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('customer_segments')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Customer Segments
@@ -151,7 +331,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Key Metrics */}
-        <Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all duration-200',
+            isFieldSelected('key_metrics') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('key_metrics')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Key Metrics
@@ -173,7 +359,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Channels */}
-        <Card>
+        <Card
+          className={cn(
+            'cursor-pointer transition-all duration-200',
+            isFieldSelected('channels') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('channels')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Channels
@@ -195,7 +387,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Cost Structure */}
-        <Card className="lg:col-span-2">
+        <Card
+          className={cn(
+            'lg:col-span-2 cursor-pointer transition-all duration-200',
+            isFieldSelected('cost_structure') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('cost_structure')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Cost Structure
@@ -220,7 +418,13 @@ export default function OverviewPage() {
         </Card>
 
         {/* Revenue Streams */}
-        <Card className="lg:col-span-3">
+        <Card
+          className={cn(
+            'lg:col-span-3 cursor-pointer transition-all duration-200',
+            isFieldSelected('revenue_streams') && 'selection-glow'
+          )}
+          onClick={() => handleFieldSelect('revenue_streams')}
+        >
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
               Revenue Streams
