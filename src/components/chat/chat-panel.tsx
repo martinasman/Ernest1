@@ -31,10 +31,45 @@ export function ChatPanel() {
   // Selection state for contextual editing
   const selectedElement = useUIStore((state) => state.selectedElement)
   const clearSelection = useUIStore((state) => state.clearSelection)
+  const setIsEditing = useUIStore((state) => state.setIsEditing)
 
   // Get generation tasks for inline todo display
   const generationTasks = useGenerationStore((state) => state.tasks)
   const isGenerating = useGenerationStore((state) => state.isGenerating)
+  const aiContext = workspace?.ai_context as Record<string, unknown> | undefined
+  const generatedFiles = (aiContext?.generated_files || aiContext?.websiteFiles) as Record<string, string> | undefined
+  const canEditCode = !!(generatedFiles && Object.keys(generatedFiles).length > 0)
+
+  const isEditIntent = (text: string) => {
+    const lower = text.toLowerCase()
+    const keywords = [
+      'color',
+      'button',
+      'style',
+      'font',
+      'layout',
+      'section',
+      'page',
+      'nav',
+      'menu',
+      'footer',
+      'hero',
+      'cta',
+      'background',
+      'heading',
+      'copy',
+      'text',
+      'animation',
+      'form',
+      'add ',
+      'create ',
+      'edit ',
+      'remove ',
+      'change ',
+      'update ',
+    ]
+    return keywords.some((k) => lower.includes(k)) || !!selectedElement
+  }
 
   // Get display name for selected element
   const getEditingLabel = () => {
@@ -103,6 +138,7 @@ export function ChatPanel() {
       if (selectedElement?.type === 'overview') {
         const os = selectedElement as OverviewSelection
         const editingLabel = getEditingLabel()
+        setIsEditing(true)
 
         // Call the edit-overview API
         const response = await fetch('/api/ai/edit-overview', {
@@ -134,6 +170,42 @@ export function ChatPanel() {
 
         // Clear selection after successful edit
         clearSelection()
+        return
+      }
+
+      // Code editing flow (post-generation)
+      if (canEditCode && !isGenerating && isEditIntent(input.trim())) {
+        setIsEditing(true)
+        const selectedFile =
+          selectedElement && selectedElement.type === 'website'
+            ? `src/pages/${selectedElement.pageSlug}.tsx`
+            : undefined
+
+        const response = await fetch('/api/ai/edit-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceId: workspace.id,
+            prompt: input.trim(),
+            model: selectedModel,
+            context: selectedFile ? { selectedFile } : undefined,
+          })
+        })
+
+        const result = await response.json()
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to edit code')
+        }
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          role: 'assistant',
+          content: result.summary || 'Updated your site.',
+        }
+        setLocalMessages(prev => [...prev, assistantMessage])
+
+        // Refresh workspace to pull updated files/context
+        refetch()
         return
       }
 
@@ -187,6 +259,7 @@ export function ChatPanel() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred')
     } finally {
+      setIsEditing(false)
       setIsLoading(false)
     }
   }

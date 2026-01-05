@@ -41,6 +41,10 @@ interface UIState {
   selectedElement: SelectedElement
   setSelectedElement: (element: SelectedElement) => void
   clearSelection: () => void
+
+  // Editing state for live feedback
+  isEditing: boolean
+  setIsEditing: (value: boolean) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -67,4 +71,8 @@ export const useUIStore = create<UIState>((set) => ({
   selectedElement: null,
   setSelectedElement: (element) => set({ selectedElement: element }),
   clearSelection: () => set({ selectedElement: null }),
+
+  // Editing pulse state
+  isEditing: false,
+  setIsEditing: (value) => set({ isEditing: value }),
 }))

@@ -153,3 +153,20 @@
   background-size: 400% 400%;
   animation: gradient-flow 8s ease infinite;
 }
+
+/* Lime pulse for live editing state */
+@keyframes pulse-lime {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(132, 204, 22, 0.3);
+    border-color: #84cc16;
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(132, 204, 22, 0.12);
+    border-color: #a3e635;
+  }
+}
+
+.editing-ring {
+  animation: pulse-lime 1.6s ease-in-out infinite;
+  border-width: 1px;
+}
