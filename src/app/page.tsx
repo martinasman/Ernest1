@@ -456,11 +456,83 @@ export default function Home() {
     )
   }
 
-  // LOGGED OUT - Redirect to login
-  router.push('/login')
+  // LOGGED OUT VIEW - Same design, just no projects
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center">
-      <Loader2 className="w-8 h-8 animate-spin text-[#c8ff00]" />
+    <div className="min-h-screen bg-white">
+      {/* Header */}
+      <header>
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+          <span className="text-xl font-serif text-gray-900">Ernest</span>
+          <div className="flex items-center gap-3">
+            <Link href="/login">
+              <Button variant="ghost" className="text-gray-600 hover:text-gray-900">
+                Sign in
+              </Button>
+            </Link>
+            <Link href="/signup">
+              <Button className="bg-[#c8ff00] hover:bg-[#b8ef00] text-gray-900">
+                Get Started
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <div className="container mx-auto px-4">
+        {/* Greeting + Prompt - Centered vertically */}
+        <div className="flex flex-col items-center justify-center min-h-[70vh] py-12">
+          {/* Greeting */}
+          <div className="flex items-center justify-center gap-3 mb-10">
+            <span className="text-[#c8ff00] text-3xl">&#10042;</span>
+            <h1 className="text-4xl font-serif text-gray-900">
+              How can Ernest help you?
+            </h1>
+          </div>
+
+          {/* Prompt Box */}
+          <div className="w-full max-w-2xl">
+            <div className="bg-[#1c1c1c] rounded-xl px-4 py-4">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Describe your business idea..."
+                className="w-full bg-transparent text-gray-200 placeholder-gray-500 text-base resize-none focus:outline-none min-h-[60px] max-h-40 font-serif"
+                rows={2}
+              />
+              <div className="flex items-center justify-between pt-3">
+                <div className="flex items-center gap-1">
+                  <button className="p-2 rounded-full bg-[#2a2a2a] hover:bg-[#3a3a3a] text-gray-400 transition-colors">
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <ModelPicker
+                    value={selectedModel}
+                    onChange={setModel}
+                    variant="compact"
+                  />
+                </div>
+                <button
+                  onClick={handleSubmit}
+                  disabled={isSubmitting || !prompt.trim()}
+                  className="w-8 h-8 aspect-square rounded-full flex items-center justify-center bg-[#c8ff00] text-gray-900 hover:bg-[#b8ef00] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ArrowUpRight className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Sign in hint */}
+          <p className="mt-6 text-sm text-gray-500">
+            <Link href="/login" className="text-gray-700 hover:text-gray-900 underline">Sign in</Link> to access your projects
+          </p>
+        </div>
+      </div>
     </div>
   )
 }
