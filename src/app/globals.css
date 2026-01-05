@@ -140,3 +140,16 @@
   outline: 2px solid rgba(59, 130, 246, 0.5);
   outline-offset: 2px;
 }
+
+/* Animated lime green gradient for auth pages */
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-gradient-lime {
+  background: linear-gradient(-45deg, #c8ff00, #9acd32, #adff2f, #b8ef00, #dfff00);
+  background-size: 400% 400%;
+  animation: gradient-flow 8s ease infinite;
+}
