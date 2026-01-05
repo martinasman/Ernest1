@@ -31,6 +31,50 @@ export interface StartPreviewResult {
 }
 
 class PreviewService {
+  private getViteAllowedHosts(): string[] {
+    const appName = process.env.FLY_PREVIEW_APP_NAME || 'ernest-previews'
+    const host = process.env.FLY_PREVIEW_HOST
+    const platformRoot = 'astridite.com'
+    return [
+      `${appName}.fly.dev`,
+      'ernest-previews.fly.dev',
+      '.ernest-previews.fly.dev',
+      platformRoot,
+      `.${platformRoot}`,
+      host,
+    ].filter(Boolean) as string[]
+  }
+
+  private ensureViteAllowedHosts(files: Record<string, string>): Record<string, string> {
+    const allowedHosts = this.getViteAllowedHosts()
+    if (allowedHosts.length === 0) return files
+
+    const next = { ...files }
+    const configPath = next['vite.config.ts'] ? 'vite.config.ts' : next['vite.config.js'] ? 'vite.config.js' : null
+    if (!configPath) return next
+
+    const content = next[configPath]
+    if (!content) return next
+
+    // If already configured, avoid touching
+    if (content.includes('allowedHosts')) return next
+
+    const allowedHostsLines = allowedHosts.map((h) => `      '${h}',`).join('\n')
+    const insert = `\n    allowedHosts: [\n${allowedHostsLines}\n    ],\n`
+
+    // Best-effort insertion into server config block
+    const serverBlockMatch = content.match(/server:\s*{[\s\S]*?}/m)
+    if (!serverBlockMatch) return next
+
+    const serverBlock = serverBlockMatch[0]
+    // Insert just before the closing brace of the server block
+    const patchedServerBlock = serverBlock.replace(/}\s*$/m, `${insert}  }`)
+    if (patchedServerBlock === serverBlock) return next
+
+    next[configPath] = content.replace(serverBlock, patchedServerBlock)
+    return next
+  }
+
   private async waitForSyncServer(syncUrl: string, attempts = 20, timeoutMs = 4000) {
     for (let i = 0; i < attempts; i++) {
       try {
@@ -218,6 +262,9 @@ class PreviewService {
       throw new Error('No active preview session')
     }
 
+    // Ensure Vite is willing to serve behind Fly/custom hostnames
+    const safeFiles = this.ensureViteAllowedHosts(files)
+
     // Wait for sync server DNS/health to be ready (avoids ENOTFOUND right after start)
     await this.waitForSyncServer(session.sync_url)
 
@@ -227,7 +274,7 @@ class PreviewService {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ files }),
+      body: JSON.stringify({ files: safeFiles }),
     })
 
     if (!response.ok) {
@@ -242,7 +289,7 @@ class PreviewService {
       .from('preview_sessions')
       .update({
         files_synced_at: syncedAt,
-        file_count: Object.keys(files).length,
+        file_count: Object.keys(safeFiles).length,
         last_activity_at: syncedAt,
       })
       .eq('id', session.id)
@@ -263,13 +310,20 @@ class PreviewService {
       throw new Error('No active preview session')
     }
 
+    // Ensure vite allowed hosts are present if vite config is updated
+    let safeContent = content
+    if ((filePath === 'vite.config.ts' || filePath === 'vite.config.js') && !content.includes('allowedHosts')) {
+      const patched = this.ensureViteAllowedHosts({ [filePath]: content })
+      safeContent = patched[filePath] || content
+    }
+
     // Send single file update to sync server
     const response = await fetch(`${session.sync_url}/update`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ path: filePath, content }),
+      body: JSON.stringify({ path: filePath, content: safeContent }),
     })
 
     if (!response.ok) {
