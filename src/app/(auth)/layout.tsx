@@ -1,5 +1,3 @@
-import { WordCloud } from '@/components/auth/word-cloud'
-
 export default function AuthLayout({
   children,
 }: {
@@ -14,9 +12,23 @@ export default function AuthLayout({
         </div>
       </div>
 
-      {/* Right - Decorative Area (hidden on mobile/tablet) */}
-      <div className="hidden lg:flex lg:flex-1 relative overflow-hidden bg-gradient-to-br from-blue-100 via-sky-50 to-amber-50 rounded-l-[40px]">
-        <WordCloud />
+      {/* Right - Animated Lime Green Gradient */}
+      <div className="hidden lg:flex lg:flex-1 relative overflow-hidden rounded-l-[40px]">
+        <div
+          className="absolute inset-0 animate-gradient-flow"
+          style={{
+            background: 'linear-gradient(-45deg, #c8ff00, #9acd32, #adff2f, #b8ef00, #dfff00)',
+            backgroundSize: '400% 400%',
+            animation: 'gradientFlow 8s ease infinite',
+          }}
+        />
+        <style jsx>{`
+          @keyframes gradientFlow {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+          }
+        `}</style>
       </div>
     </div>
   )

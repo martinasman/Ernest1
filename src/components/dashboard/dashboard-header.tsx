@@ -32,6 +32,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 
 export function DashboardHeader() {
@@ -262,11 +264,58 @@ export function DashboardHeader() {
           Share
         </Button>
 
-        {/* Publish Button */}
-        <Button size="sm" className="gap-2 bg-[#c8ff00] hover:bg-[#b8ef00] text-gray-900">
-          Publish
-          <ArrowUp className="w-3.5 h-3.5" />
-        </Button>
+        {/* Publish Button with Lovable-style dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" className="gap-2 bg-[#c8ff00] hover:bg-[#b8ef00] text-gray-900">
+              Publish
+              <ArrowUp className="w-3.5 h-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-72 p-3 bg-slate-900 text-slate-50 border border-slate-800 shadow-2xl rounded-xl">
+            <DropdownMenuLabel className="text-xs uppercase tracking-[0.2em] text-slate-400">
+              Publish your app
+            </DropdownMenuLabel>
+            <div className="mt-2 space-y-3 text-sm">
+              <div>
+                <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                  <span>Published URL</span>
+                  <span className="text-slate-500">optional</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    className="w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="published-url.astridite.com"
+                  />
+                </div>
+                <button className="mt-2 text-xs text-blue-300 hover:text-blue-200 font-medium">
+                  Add custom domain
+                </button>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                  <span>Who can visit the URL?</span>
+                </div>
+                <div className="flex items-center justify-between bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-slate-50">
+                  <span>Anyone</span>
+                  <ChevronDown className="w-4 h-4 text-slate-400" />
+                </div>
+              </div>
+
+              <DropdownMenuSeparator className="bg-slate-800" />
+
+              <div className="flex items-center justify-between text-sm">
+                <button className="text-slate-200 hover:text-white font-medium">
+                  Review security
+                </button>
+                <Button size="sm" className="bg-blue-500 hover:bg-blue-600 text-white px-4">
+                  Publish
+                </Button>
+              </div>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {/* User Avatar */}
         <div className="w-8 h-8 rounded-full bg-orange-400 ml-2" />

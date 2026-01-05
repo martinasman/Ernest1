@@ -71,11 +71,8 @@ export default function SignupPage() {
   return (
     <div className="py-8">
       {/* Logo */}
-      <div className="flex items-center gap-2 mb-10">
-        <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center">
-          <span className="text-lg font-bold text-white">E</span>
-        </div>
-        <span className="text-xl font-semibold">ernest</span>
+      <div className="mb-10">
+        <span className="text-2xl font-serif text-gray-900">ernest</span>
       </div>
 
       {/* Header */}
