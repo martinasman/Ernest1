@@ -28,34 +28,64 @@ export function GenerationProgress() {
 
       <div className="space-y-1.5">
         {taskList.map((task) => (
-          <div
-            key={task.task}
-            className="flex items-center gap-2 text-sm"
-          >
-            {task.status === 'running' && (
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
-            )}
-            {task.status === 'completed' && (
-              <Check className="w-3.5 h-3.5 text-green-500" />
-            )}
-            {task.status === 'error' && (
-              <X className="w-3.5 h-3.5 text-destructive" />
-            )}
-            {task.status === 'pending' && (
-              <Circle className="w-3.5 h-3.5 text-muted-foreground" />
-            )}
-            <span
-              className={cn(
-                'flex-1',
-                task.status === 'completed' && 'text-muted-foreground',
-                task.status === 'error' && 'text-destructive'
+          <div key={task.task}>
+            <div className="flex items-center gap-2 text-sm">
+              {task.status === 'running' && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
               )}
-            >
-              {getTaskDisplayName(task.task)}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {task.status === 'running' && task.message}
-            </span>
+              {task.status === 'completed' && (
+                <Check className="w-3.5 h-3.5 text-green-500" />
+              )}
+              {task.status === 'error' && (
+                <X className="w-3.5 h-3.5 text-destructive" />
+              )}
+              {task.status === 'pending' && (
+                <Circle className="w-3.5 h-3.5 text-muted-foreground" />
+              )}
+              <span
+                className={cn(
+                  'flex-1',
+                  task.status === 'completed' && 'text-muted-foreground',
+                  task.status === 'error' && 'text-destructive'
+                )}
+              >
+                {getTaskDisplayName(task.task)}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {task.status === 'running' && !task.subTasks?.length && task.message}
+              </span>
+            </div>
+
+            {/* SubTasks - show when task is running or just completed and has subtasks */}
+            {task.subTasks && task.subTasks.length > 0 && (task.status === 'running' || task.status === 'completed') && (
+              <div className="ml-5 mt-1 space-y-0.5 border-l border-border pl-3">
+                {task.subTasks.map((subTask) => (
+                  <div
+                    key={subTask.name}
+                    className="flex items-center gap-2 text-xs"
+                  >
+                    {subTask.status === 'running' && (
+                      <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                    )}
+                    {subTask.status === 'completed' && (
+                      <Check className="w-3 h-3 text-green-500" />
+                    )}
+                    {subTask.status === 'pending' && (
+                      <Circle className="w-3 h-3 text-muted-foreground/50" />
+                    )}
+                    <span
+                      className={cn(
+                        'font-mono',
+                        subTask.status === 'completed' && 'text-muted-foreground',
+                        subTask.status === 'running' && 'text-foreground'
+                      )}
+                    >
+                      {subTask.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

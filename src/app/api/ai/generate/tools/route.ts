@@ -1,50 +1,33 @@
-import { generateObject } from 'ai'
-import { openrouter, getModelId, DEFAULT_MODEL } from '@/lib/ai/openrouter'
 import { createClient } from '@/lib/supabase/server'
-import { z } from 'zod'
-import { getDefaultUI } from '@/lib/ai/schema-generator'
-
-const ToolsSchema = z.object({
-  tools: z.array(z.object({
-    name: z.string().describe('Human-readable tool name'),
-    slug: z.string().describe('URL-safe identifier (lowercase, hyphens)'),
-    description: z.string().describe('What this tool does'),
-    icon: z.string().describe('Lucide icon name'),
-    tool_type: z.string().describe('Category like crm, inventory, tasks'),
-    schema: z.object({
-      fields: z.array(z.object({
-        name: z.string().describe('snake_case field identifier'),
-        type: z.enum([
-          'text', 'email', 'phone', 'url',
-          'number', 'currency', 'percentage',
-          'date', 'datetime', 'time',
-          'select', 'multiselect',
-          'boolean',
-          'richtext', 'textarea',
-          'file', 'image',
-        ]),
-        label: z.string(),
-        required: z.boolean(),
-        options: z.array(z.string()).optional(),
-      })),
-      indexes: z.array(z.string()),
-      primaryDisplay: z.string(),
-    }),
-  })),
-})
+import type { BusinessPlan } from '@/lib/ai/generation'
 
 export async function POST(req: Request) {
   try {
-    const { prompt, workspaceId, model } = await req.json()
+    const { workspaceId } = await req.json()
 
     if (!workspaceId) {
       return Response.json({ error: 'Missing workspaceId' }, { status: 400 })
     }
 
     const supabase = await createClient()
-    const modelId = getModelId(model || DEFAULT_MODEL)
 
-    // CRITICAL: Delete existing tools for this workspace before generating new ones
+    // Get the business plan from workspace ai_context
+    const { data: workspace } = await supabase
+      .from('workspaces')
+      .select('ai_context')
+      .eq('id', workspaceId)
+      .single()
+
+    const plan = (workspace?.ai_context as { businessPlan?: BusinessPlan })?.businessPlan
+
+    if (!plan?.suggestedTools || plan.suggestedTools.length === 0) {
+      return Response.json(
+        { error: 'No suggested tools in business plan. Generate a plan first.' },
+        { status: 400 }
+      )
+    }
+
+    // CRITICAL: Delete existing tools for this workspace before creating new ones
     // This prevents tools from accumulating across multiple generation sessions
     const { error: deleteError } = await supabase
       .from('internal_tools')
@@ -55,41 +38,19 @@ export async function POST(req: Request) {
       console.error('Failed to delete existing tools:', deleteError)
     }
 
-    // Get overview for context
-    const { data: overview } = await supabase
-      .from('overviews')
-      .select('customer_segments, revenue_streams, key_activities')
-      .eq('workspace_id', workspaceId)
-      .single()
-
-    const { object: result } = await generateObject({
-      model: openrouter(modelId),
-      schema: ToolsSchema,
-      system: `You are creating internal business tools for a company.
-
-${overview ? `
-Business context:
-- Customer segments: ${JSON.stringify(overview.customer_segments)}
-- Revenue streams: ${JSON.stringify(overview.revenue_streams)}
-- Key activities: ${JSON.stringify(overview.key_activities)}
-` : ''}
-
-Create 2-3 essential internal tools that:
-1. Address real operational needs of this business
-2. Have practical, useful fields
-3. Use appropriate field types
-4. Include status fields where workflow tracking makes sense
-5. Use Lucide icon names (e.g., users, clipboard-list, package, dollar-sign)
-
-Common tool types: crm, tasks, inventory, orders, contacts, products, appointments, projects`,
-      prompt: `Create essential internal tools for: "${prompt}"`,
-    })
-
-    // Save each tool to database
+    // Create tools from the plan's suggestedTools
     const savedTools = []
 
-    for (const tool of result.tools) {
-      const uiDefinition = getDefaultUI(tool.schema)
+    for (const tool of plan.suggestedTools) {
+      // Build schema with indexes and primaryDisplay
+      const schemaDefinition = {
+        fields: tool.schema.fields,
+        indexes: ['created_at'],
+        primaryDisplay: tool.schema.fields[0]?.name || 'name',
+      }
+
+      // Generate UI definition based on schema and view type
+      const uiDefinition = generateUIFromSchema(schemaDefinition, tool.viewType)
 
       const { data: savedTool, error } = await supabase
         .from('internal_tools')
@@ -99,8 +60,8 @@ Common tool types: crm, tasks, inventory, orders, contacts, products, appointmen
           slug: tool.slug,
           description: tool.description,
           icon: tool.icon,
-          tool_type: tool.tool_type,
-          schema_definition: tool.schema,
+          tool_type: tool.viewType,
+          schema_definition: schemaDefinition,
           ui_definition: uiDefinition,
           connections: [],
         })
@@ -122,4 +83,104 @@ Common tool types: crm, tasks, inventory, orders, contacts, products, appointmen
       { status: 500 }
     )
   }
+}
+
+// View configuration types
+interface ViewConfig {
+  columns?: string[]
+  groupBy?: string
+  dateField?: string
+  titleField?: string
+  descriptionField?: string
+}
+
+interface UIView {
+  name: string
+  type: string
+  config: ViewConfig
+}
+
+interface UIDefinition {
+  views: UIView[]
+  defaultView: string
+  detailLayout: {
+    sections: Array<{
+      title: string
+      fields: string[]
+    }>
+  }
+}
+
+// Generate UI definition based on schema and view type
+function generateUIFromSchema(
+  schema: { fields: Array<{ name: string; type: string; label: string }> },
+  viewType: string
+): UIDefinition {
+  // Get columns for table view (first 5 non-id fields)
+  const columns = schema.fields
+    .filter(f => !['id', 'created_at', 'updated_at'].includes(f.name))
+    .slice(0, 5)
+    .map(f => f.name)
+
+  // Find status and date fields for special views
+  const statusField = schema.fields.find(f => f.name === 'status' || f.type === 'select')
+  const dateField = schema.fields.find(f => ['date', 'datetime', 'time'].includes(f.type))
+
+  const baseUI: UIDefinition = {
+    views: [
+      {
+        name: 'All Records',
+        type: 'table',
+        config: { columns },
+      },
+    ],
+    defaultView: 'All Records',
+    detailLayout: {
+      sections: [
+        {
+          title: 'Details',
+          fields: schema.fields.map(f => f.name),
+        },
+      ],
+    },
+  }
+
+  // Add view-type specific configuration
+  if (viewType === 'kanban' && statusField) {
+    baseUI.views.push({
+      name: 'Board',
+      type: 'kanban',
+      config: {
+        groupBy: statusField.name,
+        columns,
+      },
+    })
+    baseUI.defaultView = 'Board'
+  }
+
+  if (viewType === 'calendar' && dateField) {
+    baseUI.views.push({
+      name: 'Calendar',
+      type: 'calendar',
+      config: {
+        dateField: dateField.name,
+        titleField: columns[0],
+      },
+    })
+    baseUI.defaultView = 'Calendar'
+  }
+
+  if (viewType === 'cards') {
+    baseUI.views.push({
+      name: 'Cards',
+      type: 'cards',
+      config: {
+        titleField: columns[0],
+        descriptionField: columns[1],
+      },
+    })
+    baseUI.defaultView = 'Cards'
+  }
+
+  return baseUI
 }

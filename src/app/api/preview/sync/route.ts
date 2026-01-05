@@ -1,25 +1,7 @@
 import { previewService } from '@/lib/preview/preview-service'
-import { convertWebsiteToFiles } from '@/lib/preview/website-to-files'
 import { createClient } from '@/lib/supabase/server'
 
 export const maxDuration = 60
-
-interface WebsiteData {
-  pages: Array<{
-    slug: string
-    title: string
-    sections: Array<Record<string, unknown>>
-  }>
-  navigation?: Array<{ label: string; href: string }>
-  footer?: { copyright: string; links: Array<{ label: string; href: string }> }
-}
-
-interface BrandData {
-  colors?: Record<string, string>
-  typography?: Record<string, unknown>
-  name?: string
-  tagline?: string
-}
 
 export async function POST(req: Request) {
   try {
@@ -38,7 +20,7 @@ export async function POST(req: Request) {
       // Use provided files directly
       files = providedFiles
     } else {
-      // Generate files from workspace website data
+      // Get pre-generated files from workspace ai_context
       const supabase = await createClient()
 
       const { data: workspace, error } = await supabase
@@ -55,18 +37,14 @@ export async function POST(req: Request) {
       }
 
       const aiContext = workspace.ai_context as Record<string, unknown>
-      const websiteData = aiContext?.website as WebsiteData | undefined
-      const brandData = aiContext?.brand as BrandData | undefined
+      files = aiContext?.websiteFiles as Record<string, string>
 
-      if (!websiteData) {
+      if (!files || Object.keys(files).length === 0) {
         return Response.json(
-          { error: 'No website data found in workspace' },
+          { error: 'No website files found. Generate a website first.' },
           { status: 400 }
         )
       }
-
-      // Convert website data to actual files
-      files = convertWebsiteToFiles(websiteData, brandData)
     }
 
     // Sync files to preview VM

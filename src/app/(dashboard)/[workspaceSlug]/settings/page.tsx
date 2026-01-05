@@ -31,6 +31,7 @@ export default function SettingsPage() {
             <Label htmlFor="name">Workspace Name</Label>
             <Input
               id="name"
+              key={`name-${workspace?.id}`}
               defaultValue={workspace?.name || ''}
               placeholder="My Business"
             />
@@ -39,6 +40,7 @@ export default function SettingsPage() {
             <Label htmlFor="slug">URL Slug</Label>
             <Input
               id="slug"
+              key={`slug-${workspace?.id}`}
               defaultValue={workspace?.slug || ''}
               disabled
             />
@@ -50,6 +52,7 @@ export default function SettingsPage() {
             <Label htmlFor="description">Business Description</Label>
             <textarea
               id="description"
+              key={`desc-${workspace?.id}`}
               className="w-full min-h-[80px] px-3 py-2 border rounded-md"
               defaultValue={workspace?.business_description || ''}
               placeholder="Describe your business..."
@@ -81,6 +84,7 @@ export default function SettingsPage() {
             <Label htmlFor="country">Country</Label>
             <Input
               id="country"
+              key={`country-${workspace?.id}`}
               defaultValue={workspace?.country_code || 'US'}
             />
           </div>

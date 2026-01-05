@@ -30,14 +30,14 @@ const BusinessPlanSchema = z.object({
   // Brand Direction (AI decides based on analysis)
   brand: z.object({
     personality: z.object({
-      formal: z.number().min(1).max(10).describe('1=very casual, 10=very formal'),
-      playful: z.number().min(1).max(10).describe('1=serious, 10=playful'),
-      traditional: z.number().min(1).max(10).describe('1=cutting-edge modern, 10=classic traditional'),
-      bold: z.number().min(1).max(10).describe('1=subtle/understated, 10=bold/loud'),
-      warm: z.number().min(1).max(10).describe('1=cool/professional, 10=warm/friendly'),
+      formal: z.number().describe('1-10 scale: 1=very casual, 10=very formal'),
+      playful: z.number().describe('1-10 scale: 1=serious, 10=playful'),
+      traditional: z.number().describe('1-10 scale: 1=cutting-edge modern, 10=classic traditional'),
+      bold: z.number().describe('1-10 scale: 1=subtle/understated, 10=bold/loud'),
+      warm: z.number().describe('1-10 scale: 1=cool/professional, 10=warm/friendly'),
     }),
     positioning: z.enum(['budget', 'mid-market', 'premium', 'luxury']),
-    values: z.array(z.string()).min(3).max(5).describe('Core brand values'),
+    values: z.array(z.string()).describe('3-5 core brand values'),
     voiceDescription: z.string().describe('How the brand should sound in writing'),
     colorMood: z.string().describe('The emotional feeling colors should evoke (e.g., calming and trustworthy, energetic and bold)'),
     typographyFeel: z.string().describe('How text should feel (e.g., modern and clean, elegant and refined, friendly and approachable)'),
@@ -51,6 +51,13 @@ const BusinessPlanSchema = z.object({
       purpose: z.string().describe('What this page accomplishes'),
       sections: z.array(z.string()).describe('Section types needed: hero, features, testimonials, pricing, cta, about, team, faq, gallery, contact, booking, products'),
       hasIntegration: z.string().optional().describe('If this page needs an integration: cal.com, stripe, contact-form'),
+      forms: z.array(z.object({
+        id: z.string().describe('Unique form ID like "contact-form", "booking-form"'),
+        purpose: z.string().describe('What this form does'),
+        targetTool: z.string().describe('Tool slug this form submits to (e.g., "customers", "reservations")'),
+        fields: z.array(z.string()).describe('Field names from the target tool schema'),
+        integration: z.enum(['stripe', 'calcom']).optional().describe('If form triggers an integration'),
+      })).optional().describe('Forms on this page that submit to internal tools'),
     })),
     navigation: z.array(z.object({
       label: z.string(),
@@ -87,6 +94,24 @@ const BusinessPlanSchema = z.object({
       reason: z.string(),
     })),
   }),
+
+  // Internal Tools for Business Owner
+  suggestedTools: z.array(z.object({
+    name: z.string().describe('Human-readable name like "Menu Items", "Reservations"'),
+    slug: z.string().describe('URL-safe slug like "menu-items", "reservations"'),
+    icon: z.string().describe('Lucide icon name like "UtensilsCrossed", "Calendar", "Users"'),
+    description: z.string().describe('What this tool helps manage'),
+    viewType: z.enum(['table', 'kanban', 'calendar', 'cards']).describe('Best view for this data'),
+    schema: z.object({
+      fields: z.array(z.object({
+        name: z.string().describe('Field name in snake_case'),
+        type: z.enum(['text', 'email', 'phone', 'number', 'currency', 'date', 'datetime', 'time', 'select', 'boolean', 'textarea', 'url', 'image']),
+        label: z.string().describe('Human-readable label'),
+        required: z.boolean(),
+        options: z.array(z.string()).optional().describe('For select type - list of options'),
+      })),
+    }),
+  })).describe('2-5 internal tools the business owner needs to manage their business'),
 })
 
 export type BusinessPlan = z.infer<typeof BusinessPlanSchema>
@@ -129,6 +154,45 @@ You know when integrations are needed:
 - Lead capture → Email service for nurturing
 - Customer support → Chat/support tools
 
+### Internal Tools by Business Type
+You know what tools each business type needs:
+
+**RESTAURANT/CAFE/BAR:**
+- Menu Items (table): name, description, price, category, dietary_tags, available
+- Reservations (calendar): customer_name, email, phone, party_size, date, time, status, notes
+- Customers (table): name, email, phone, preferences, visit_count, notes
+
+**SALON/SPA/FITNESS:**
+- Services (table): name, description, price, duration, category
+- Appointments (calendar): client_name, email, phone, service, datetime, staff, status, notes
+- Clients (table): name, email, phone, preferences, notes
+
+**RETAIL/E-COMMERCE:**
+- Products (cards): name, description, price, sku, category, stock, image_url
+- Orders (kanban): customer_name, email, items, total, status, shipping_address
+- Customers (table): name, email, phone, address, order_count
+
+**AGENCY/CONSULTING:**
+- Projects (kanban): name, client, status, deadline, budget, description
+- Clients (table): company, contact_name, email, phone, industry, notes
+- Leads (kanban): company, contact_name, email, source, status, value
+
+**HEALTHCARE/DENTAL:**
+- Appointments (calendar): patient_name, email, phone, datetime, type, status, notes
+- Patients (table): name, email, phone, dob, insurance, medical_notes
+
+**EDUCATION/COACHING:**
+- Students (table): name, email, phone, program, enrollment_date, status
+- Sessions (calendar): student_name, datetime, type, status, notes
+- Courses (cards): name, description, price, duration, capacity
+
+### Form → Tool Connections
+Website forms should connect to internal tools:
+- Contact form → Customers/Leads tool
+- Booking form → Reservations/Appointments tool (with Cal.com)
+- Order form → Orders tool (with Stripe)
+- Newsletter signup → Customers tool (email field only)
+
 ## YOUR TASK
 
 Analyze the business description and create a comprehensive plan. Consider:
@@ -168,6 +232,19 @@ Create a detailed plan that covers:
 4. Website structure with the specific pages this business needs
 5. Revenue flow showing how customers become paying customers
 6. Integrations that this specific business model requires
+7. Internal tools the business owner needs (2-5 tools with full field schemas)
+8. Forms on the website that connect to those internal tools
+
+IMPORTANT for suggestedTools:
+- Each tool must have a complete schema with field types
+- Use appropriate view types: calendar for time-based data, kanban for status-based, table for lists, cards for visual items
+- Include status fields with options like: ["pending", "confirmed", "completed", "cancelled"]
+- Field types: text, email, phone, number, currency, date, datetime, time, select, boolean, textarea
+
+IMPORTANT for forms:
+- Every contact/booking/order form must specify a targetTool (the tool slug it submits to)
+- List the field names that the form captures (must match tool schema fields)
+- Add integration if form triggers Cal.com or Stripe
 
 Think step by step. Be specific. Don't give generic answers.`,
   })

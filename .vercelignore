@@ -1,0 +1,5 @@
+# Exclude preview VM template from build
+preview-vm
+preview-vm/**
+fly-preview
+fly-preview/**

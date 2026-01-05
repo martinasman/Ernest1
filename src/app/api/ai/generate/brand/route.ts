@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { generateBrand, type Brand } from '@/lib/ai/generation'
+import { generateBrand, generateBrandCSS, type Brand } from '@/lib/ai/generation'
 import type { BusinessPlan } from '@/lib/ai/generation'
 
 export async function POST(req: Request) {
@@ -79,17 +79,33 @@ export async function POST(req: Request) {
       return Response.json({ error: error.message }, { status: 500 })
     }
 
-    // Also update workspace name
+    // Fetch existing ai_context so we can persist the full brand for previews/exports
+    const { data: workspaceContext } = await supabase
+      .from('workspaces')
+      .select('ai_context')
+      .eq('id', workspaceId)
+      .single()
+
+    const existingContext = (workspaceContext?.ai_context as Record<string, unknown>) || {}
+
+    // Also update workspace name and ai_context.brand for downstream generators
     await supabase
       .from('workspaces')
       .update({
         name: brand.name,
         business_description: prompt || plan.business.description,
+        ai_context: {
+          ...existingContext,
+          brand,
+        },
         updated_at: new Date().toISOString(),
       })
       .eq('id', workspaceId)
 
-    return Response.json({ brand: savedBrand, fullBrand: brand })
+    // Generate CSS from brand for immediate use in preview
+    const brandCSS = generateBrandCSS(brand)
+
+    return Response.json({ brand: savedBrand, fullBrand: brand, brandCSS })
   } catch (error) {
     console.error('Brand generation error:', error)
     return Response.json(

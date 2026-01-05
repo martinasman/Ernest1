@@ -92,12 +92,17 @@ export function useWorkspace() {
     }
   }, [workspaceSlug, loadWorkspace])
 
+  // Check if we're showing stale data (URL changed but workspace hasn't loaded yet)
+  const isStale = workspaceSlug && workspace && workspace.slug !== workspaceSlug
+
   return {
-    workspace,
-    brand,
-    overview,
-    tools,
-    isLoading,
+    // Return null if data is stale (prevents showing old workspace name in header)
+    workspace: isStale ? null : workspace,
+    brand: isStale ? null : brand,
+    overview: isStale ? null : overview,
+    tools: isStale ? [] : tools,
+    // Show loading when actually loading OR when data is stale
+    isLoading: isLoading || isStale,
     error,
     workspaceSlug,
     refetch,

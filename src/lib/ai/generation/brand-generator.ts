@@ -256,3 +256,126 @@ export function brandToTailwindConfig(brand: Brand): string {
   },
 }`
 }
+
+// Convert hex color to HSL format for Tailwind CSS variables
+// Returns format: "210 40% 98%" (without hsl() wrapper)
+export function hexToHSL(hex: string): string {
+  // Handle invalid input
+  if (!hex || !hex.startsWith('#') || hex.length < 7) {
+    return '0 0% 50%'
+  }
+
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  let h = 0
+  let s = 0
+  const l = (max + min) / 2
+
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+
+    switch (max) {
+      case r:
+        h = ((g - b) / d + (g < b ? 6 : 0)) / 6
+        break
+      case g:
+        h = ((b - r) / d + 2) / 6
+        break
+      case b:
+        h = ((r - g) / d + 4) / 6
+        break
+    }
+  }
+
+  return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`
+}
+
+// Calculate contrasting foreground color (white or black) based on background luminance
+function getContrastingForeground(hex: string): string {
+  if (!hex || !hex.startsWith('#') || hex.length < 7) {
+    return '0 0% 100%' // Default to white
+  }
+
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+
+  // Calculate relative luminance
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+  // Return white for dark backgrounds, near-black for light backgrounds
+  return luminance > 0.5 ? '0 0% 9%' : '0 0% 100%'
+}
+
+// Get border radius CSS value
+function getRadiusValue(radius: Brand['borderRadius']): string {
+  switch (radius) {
+    case 'none': return '0'
+    case 'sm': return '0.25rem'
+    case 'md': return '0.375rem'
+    case 'lg': return '0.5rem'
+    case 'xl': return '0.75rem'
+    case 'full': return '9999px'
+    default: return '0.375rem'
+  }
+}
+
+// Generate complete CSS for globals.css with Tailwind v4 compatible variables
+// This CSS should be included in the generated website's globals.css
+export function generateBrandCSS(brand: Brand): string {
+  // Calculate border color from muted if not explicitly set
+  const borderColor = brand.colors.muted
+
+  return `@import url('https://fonts.googleapis.com/css2?family=${encodeURIComponent(brand.fonts.heading)}:wght@${brand.fonts.headingWeight}&family=${encodeURIComponent(brand.fonts.body)}:wght@${brand.fonts.bodyWeight}&display=swap');
+
+@layer base {
+  :root {
+    --background: ${hexToHSL(brand.colors.background)};
+    --foreground: ${hexToHSL(brand.colors.foreground)};
+
+    --primary: ${hexToHSL(brand.colors.primary)};
+    --primary-foreground: ${getContrastingForeground(brand.colors.primary)};
+
+    --secondary: ${hexToHSL(brand.colors.secondary)};
+    --secondary-foreground: ${getContrastingForeground(brand.colors.secondary)};
+
+    --accent: ${hexToHSL(brand.colors.accent)};
+    --accent-foreground: ${getContrastingForeground(brand.colors.accent)};
+
+    --muted: ${hexToHSL(brand.colors.muted)};
+    --muted-foreground: ${hexToHSL(brand.colors.mutedForeground)};
+
+    --destructive: ${hexToHSL(brand.colors.destructive)};
+    --destructive-foreground: ${getContrastingForeground(brand.colors.destructive)};
+
+    --success: ${hexToHSL(brand.colors.success)};
+    --warning: ${hexToHSL(brand.colors.warning)};
+
+    --border: ${hexToHSL(borderColor)};
+    --input: ${hexToHSL(borderColor)};
+    --ring: ${hexToHSL(brand.colors.primary)};
+
+    --radius: ${getRadiusValue(brand.borderRadius)};
+
+    --font-heading: '${brand.fonts.heading}', system-ui, sans-serif;
+    --font-body: '${brand.fonts.body}', system-ui, sans-serif;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-body);
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    font-weight: ${brand.fonts.headingWeight};
+  }
+}`
+}

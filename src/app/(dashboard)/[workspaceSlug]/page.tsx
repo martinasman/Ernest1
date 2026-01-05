@@ -2,6 +2,7 @@
 
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useBusinessGenerator } from '@/hooks/use-business-generator'
+import { useGenerationStore } from '@/stores/generation-store'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -10,14 +11,15 @@ import {
   GitBranch,
   FileText,
   Wrench,
-  Users,
   TrendingUp,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react'
 import Link from 'next/link'
 
 export default function DashboardPage() {
   const { workspace, brand, overview, tools, isLoading } = useWorkspace()
+  const isGenerating = useGenerationStore((state) => state.isGenerating)
 
   // Detect ?prompt param and trigger parallel AI generation
   useBusinessGenerator()
@@ -41,17 +43,31 @@ export default function DashboardPage() {
     !overview?.unique_value_proposition &&
     (!brand || brand.name === 'My Business')
 
-  // Show clean empty state when nothing has been generated
-  if (isEmptyWorkspace) {
+  // Show clean empty state when nothing has been generated OR during generation
+  if (isEmptyWorkspace || isGenerating) {
     return (
-      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] p-6">
+      <div className="flex items-center justify-center min-h-[calc(100vh-4rem)] p-6 bg-white">
         <div className="text-center max-w-md">
-          <h1 className="text-2xl font-semibold text-gray-900 mb-2">
-            What kind of business do you want to create?
-          </h1>
-          <p className="text-gray-500 text-sm">
-            Use the chat on the right to describe your business and Ernest will generate everything for you.
-          </p>
+          {isGenerating ? (
+            <>
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-4 text-gray-400" />
+              <h1 className="text-xl font-semibold text-gray-900 mb-2">
+                Building your business...
+              </h1>
+              <p className="text-gray-500 text-sm">
+                Check the chat panel to see progress
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+                What kind of business do you want to create?
+              </h1>
+              <p className="text-gray-500 text-sm">
+                Use the chat on the right to describe your business and Ernest will generate everything for you.
+              </p>
+            </>
+          )}
         </div>
       </div>
     )

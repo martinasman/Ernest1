@@ -6,6 +6,8 @@
 const FLY_API_BASE = 'https://api.machines.dev/v1'
 const FLY_APP_NAME = process.env.FLY_PREVIEW_APP_NAME || 'ernest-previews'
 const FLY_API_TOKEN = process.env.FLY_API_TOKEN
+const FLY_PREVIEW_HOST = process.env.FLY_PREVIEW_HOST // optional override (e.g. custom domain)
+const FLY_PREVIEW_IPV4 = process.env.FLY_PREVIEW_IPV4 // optional IPv4 override for sync traffic
 
 // Preview VM configuration
 const MACHINE_CONFIG = {
@@ -19,8 +21,8 @@ const MACHINE_CONFIG = {
   },
 }
 
-// Docker image for preview VMs (to be built separately)
-const PREVIEW_IMAGE = 'registry.fly.io/ernest-preview-base:latest'
+// Docker image for preview VMs
+const PREVIEW_IMAGE = 'registry.fly.io/ernest-previews:latest'
 
 export interface FlyMachine {
   id: string
@@ -238,12 +240,14 @@ class FlyMachineManager {
    * Get URLs for a running machine
    */
   getUrls(machine: FlyMachine): { previewUrl: string; syncUrl: string } {
-    // Fly.io auto-assigns URLs based on machine ID and app name
-    const hostname = `${machine.id}.${FLY_APP_NAME}.fly.dev`
+    // Use app-level hostname so DNS is stable even as machines churn
+    const hostname = FLY_PREVIEW_HOST || `${FLY_APP_NAME}.fly.dev`
+    // Allow forcing IPv4 for sync (handy when IPv6/hostname resolution is flaky locally)
+    const syncHost = FLY_PREVIEW_IPV4 || hostname
 
     return {
-      previewUrl: `https://${hostname}`, // Port 5173 mapped to 443
-      syncUrl: `http://${machine.private_ip}:3001`, // Internal sync endpoint
+      previewUrl: `https://${hostname}`, // Port 5173 mapped to 443 via http_service
+      syncUrl: `http://${syncHost}:3001`, // Public sync endpoint on port 3001
     }
   }
 

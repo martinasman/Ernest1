@@ -1,23 +1,31 @@
-import { generateObject } from 'ai'
+import { generateText } from 'ai'
 import { openrouter, getModelId, DEFAULT_MODEL } from '@/lib/ai/openrouter'
-import { z } from 'zod'
 import type { BusinessPlan } from './planner'
-import { validateWebsite, hasBlockingIssues, formatIssuesForRetry } from './website-validator'
+import { getWorkspaceIntegrations } from '@/lib/integrations/get-workspace-integrations'
+import { hexToHSL } from './brand-generator'
 
 // Brand type from database
 interface BrandColors {
   primary?: string
+  primaryLight?: string
+  primaryDark?: string
   secondary?: string
+  secondaryLight?: string
   accent?: string
   background?: string
   foreground?: string
   muted?: string
+  mutedForeground?: string
+  success?: string
+  warning?: string
   destructive?: string
 }
 
 interface BrandFonts {
   heading?: string
+  headingWeight?: string
   body?: string
+  bodyWeight?: string
 }
 
 interface Brand {
@@ -26,7 +34,6 @@ interface Brand {
   colors?: BrandColors
   fonts?: BrandFonts
   tone_of_voice?: string
-  writing_guidelines?: string
   border_radius?: string
 }
 
@@ -43,479 +50,1124 @@ interface Overview {
   revenue_streams?: unknown[]
 }
 
-// Section item schema for features, FAQ, pricing, etc.
-const SectionItemSchema = z.object({
-  title: z.string(),
-  description: z.string(),
-  icon: z.string().optional().describe('Lucide icon name'),
-  price: z.string().optional().describe('For pricing sections'),
-  features: z.array(z.string()).optional().describe('For pricing tiers'),
-  question: z.string().optional().describe('For FAQ sections'),
-  answer: z.string().optional().describe('For FAQ sections'),
-})
+// Progress callback for streaming updates
+export type PageProgressCallback = (update: {
+  type: 'page_start' | 'page_done' | 'file_start' | 'file_done'
+  name: string
+  current?: number
+  total?: number
+}) => void
 
-// Image placeholder for future image generation
-const ImagePlaceholderSchema = z.object({
-  alt: z.string(),
-  description: z.string().describe('Detailed description for future image generation'),
-})
+// Generated website structure
+export interface GeneratedWebsite {
+  pages: Array<{
+    slug: string
+    title: string
+    code: string
+  }>
+  files: Record<string, string>
+}
 
-// Layout variants for sections - REQUIRED for all sections
-const LayoutSchema = z.enum([
-  'centered',      // Text centered, max-w-3xl, classic SaaS look
-  'split',         // Image left (40%), text right (60%)
-  'split-reverse', // Text left, image right
-  'grid',          // 2-4 column card grid, responsive
-  'stacked',       // Full-width vertical stack, text-focused
-  'alternating',   // Zigzag pattern for storytelling
-  'cards',         // Card-based with consistent styling
-  'bento',         // Asymmetric grid with varied card sizes
-]).describe('Layout variant - REQUIRED for every section')
+// Page definition for generation
+interface PageDefinition {
+  slug: string
+  title: string
+  sections: string[]
+}
 
-// Website section schema with stricter validation
-const WebsiteSectionSchema = z.object({
-  type: z.enum([
-    'hero',
-    'features',
-    'benefits',
-    'testimonials',
-    'pricing',
-    'faq',
-    'team',
-    'about',
-    'cta',
-    'gallery',
-    'contact',
-    'booking',
-    'products',
-    'stats',
-    'process',
-    'trust',
-  ]),
+// System prompt for generating React code
+const WEBSITE_SYSTEM_PROMPT = `You are an expert React developer creating beautiful, modern, UNIQUE websites.
 
-  // Layout - REQUIRED (not optional)
-  layout: LayoutSchema.describe('Layout variant - REQUIRED for every section'),
-  darkSection: z.boolean().default(false).describe('Use dark background for this section'),
+## CRITICAL: OUTPUT FORMAT
+Return ONLY valid TypeScript React code. No markdown. No code fences. No explanations.
+The code must be a complete, working React component.
 
-  // Badge text - business-specific, NEVER generic
-  badgeText: z.string().max(40).optional()
-    .describe('Business-specific badge (max 40 chars). BANNED: "Welcome", "Features", "About". GOOD: "Trusted by 500+ businesses", "New: AI-powered"'),
+## CRITICAL: USE CSS VARIABLES FOR ALL COLORS
+You MUST use these Tailwind classes that map to CSS variables:
 
-  // Content with stricter limits
-  headline: z.string().max(65)
-    .describe('4-8 words MAX (40-65 chars). Must include specific outcome, number, or timeframe. BANNED: "Welcome to..."'),
-  subheadline: z.string().max(150).optional()
-    .describe('Explains the how/what in max 150 chars'),
-  content: z.string().max(500).optional()
-    .describe('Paragraph content for about sections, max 500 chars'),
+BACKGROUNDS:
+- bg-background (main page background)
+- bg-foreground (inverted sections for contrast)
+- bg-primary (brand color backgrounds)
+- bg-primary/10, bg-primary/20 (transparent brand tints)
+- bg-secondary (secondary brand color)
+- bg-accent (highlight/accent areas)
+- bg-muted (subtle card/section backgrounds)
 
-  // Items for features, pricing, FAQ, etc.
-  items: z.array(SectionItemSchema).optional(),
+TEXT:
+- text-foreground (main text on light backgrounds)
+- text-background (text on dark/inverted sections)
+- text-primary (brand colored text)
+- text-primary-foreground (text ON primary backgrounds)
+- text-muted-foreground (subtle/secondary text)
 
-  // CTAs with strict rules
-  ctaText: z.string().max(20).optional()
-    .describe('2-4 words. Action + benefit. BANNED: "Submit", "Click Here", "Learn More", "Get Started"'),
-  secondaryCtaText: z.string().max(25).optional()
-    .describe('Optional secondary CTA, max 25 chars'),
-  ctaHref: z.string().optional(),
+BORDERS:
+- border-border (all borders)
+- border-primary (accent borders)
 
-  // Visual elements
-  image: ImagePlaceholderSchema.optional(),
+NEVER USE:
+- bg-gray-*, bg-white, bg-black, bg-blue-*, bg-slate-*, etc.
+- text-gray-*, text-white, text-black, etc.
+- Any hardcoded hex colors like #ffffff, #000000
+- Any Tailwind color that isn't a CSS variable class
 
-  // Stats section data
-  stats: z.array(z.object({
-    value: z.string().describe('Specific number with unit, e.g., "500+", "98%", "24/7"'),
-    label: z.string().max(30).describe('What the stat represents'),
-  })).optional(),
+## DESIGN PRINCIPLES
 
-  // Testimonials with required specificity
-  testimonials: z.array(z.object({
-    quote: z.string().max(200).describe('Specific quote mentioning results/outcomes, max 200 chars'),
-    author: z.string().describe('Full name'),
-    role: z.string().optional().describe('Job title'),
-    company: z.string().optional().describe('Company name (for B2B)'),
-  })).optional(),
+Create VISUALLY STUNNING and UNIQUE layouts tailored to the business type:
 
-  // Trust indicators
-  trustLogos: z.array(z.string()).optional()
-    .describe('Names of companies/publications for trust badges'),
-  trustMetric: z.string().optional()
-    .describe('e.g., "Trusted by 10,000+ customers"'),
-})
+1. CREATIVE LAYOUTS - Don't just center everything
+   - Asymmetric grids
+   - Overlapping elements with z-index
+   - Bento-style mixed grid sizes
+   - Split layouts with creative angles
+   - Full-bleed sections with text overlays
 
-// Website page schema
-const WebsitePageSchema = z.object({
-  slug: z.string(),
-  title: z.string(),
-  metaTitle: z.string().describe('SEO title'),
-  metaDescription: z.string().describe('SEO description'),
-  sections: z.array(WebsiteSectionSchema),
-})
+2. VISUAL INTEREST
+   - Gradient backgrounds: bg-gradient-to-br from-primary/10 via-background to-accent/5
+   - Decorative blurred shapes: <div className="absolute -z-10 w-72 h-72 bg-primary/20 rounded-full blur-3xl" />
+   - Creative use of whitespace
+   - Subtle animations
 
-// Complete website schema
-const WebsiteSchema = z.object({
-  pages: z.array(WebsitePageSchema),
-  navigation: z.array(z.object({
-    label: z.string(),
-    href: z.string(),
-    isPrimary: z.boolean().optional().describe('Style as button CTA'),
-  })),
-  footer: z.object({
-    copyright: z.string(),
-    tagline: z.string().optional(),
-    links: z.array(z.object({
-      label: z.string(),
-      href: z.string(),
-    })),
-  }),
-})
+3. MODERN EFFECTS
+   - Glassmorphism: bg-background/80 backdrop-blur-md
+   - Soft shadows: shadow-xl shadow-primary/10
+   - Hover animations: hover:scale-105 hover:-translate-y-1 transition-all duration-300
+   - Border glows: ring-2 ring-primary/20
 
-export type Website = z.infer<typeof WebsiteSchema>
-export type WebsitePage = z.infer<typeof WebsitePageSchema>
-export type WebsiteSection = z.infer<typeof WebsiteSectionSchema>
+4. TYPOGRAPHY HIERARCHY
+   - Hero headlines: text-5xl md:text-6xl lg:text-7xl font-bold tracking-tight
+   - Section headlines: text-3xl md:text-4xl font-bold
+   - Large body text: text-lg md:text-xl text-muted-foreground
+   - Proper line heights: leading-tight for headlines, leading-relaxed for body
 
-const WEBSITE_SYSTEM_PROMPT = `You are Ernest's PREMIUM website content generator. Your job is to create distinctive, hand-crafted websites that look professionally designed—NOT generic AI output.
+5. RESPONSIVE DESIGN
+   - Mobile-first with md: and lg: breakpoints
+   - Generous sections: py-20 md:py-28 lg:py-32
+   - Breathing room: space-y-6, gap-8
+   - Max widths: max-w-3xl for text blocks, max-w-7xl for layouts
 
-## CRITICAL: ANTI-GENERIC RULES
+## COMPONENT STRUCTURE
 
-### NEVER DO THIS (instant quality fail):
-- Teal + beige color combinations (the "AI website" look)
-- "Welcome to [Business Name]" headlines
-- Three identical columns with generic icons
-- Stock phrases: "quality services", "customer satisfaction", "your trusted partner"
-- Generic CTAs: "Learn More", "Get Started", "Submit", "Click Here"
-- Placeholder-feeling content without specific numbers or outcomes
+Always use this exact structure:
+\`\`\`tsx
+'use client'
 
-### ALWAYS DO THIS:
-- Use the brand's ACTUAL colors (provided in context)
-- Headlines with specific numbers or outcomes ("Save 40 hours monthly")
-- Asymmetric or varied layouts (not everything centered or in threes)
-- CTAs that describe the action + benefit ("Start Free Trial", "Book My Session")
-- Content that could ONLY apply to THIS specific business
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { IconName } from 'lucide-react'
 
-## DESIGN SYSTEM
+export default function PageName() {
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Sections here */}
+    </div>
+  )
+}
+\`\`\`
 
-### Color Usage (60-30-10 Rule)
-- 60% - Background colors (white, light gray, or brand background)
-- 30% - Secondary colors (cards, sections, borders)
-- 10% - Accent/CTA colors (buttons, highlights, links)
+## AVAILABLE IMPORTS
+- react: useState, useEffect, useCallback, useMemo
+- react-router-dom: Link
+- lucide-react: Any icon (ArrowRight, Star, Check, Users, Zap, Heart, Clock, Mail, Phone, MapPin, Calendar, Menu, X, ChevronDown, Play, Quote, Building, Utensils, Sparkles, Shield, Award, Target, TrendingUp, BarChart, etc.)
 
-### Spacing System (8px base)
-Use only these values: 8, 16, 24, 32, 48, 64, 96, 128px
-- Section padding: 96px (desktop) / 64px (mobile)
-- Content gaps: 24-48px
-- Element spacing: 16-32px
+## MAKE IT UNIQUE
+Every business should have a DIFFERENT visual style:
+- Restaurants: Warm, inviting, food imagery focus, earth tones feel, elegant typography
+- Tech/SaaS: Clean, modern, gradient accents, floating cards, geometric shapes
+- Wellness/Spa: Soft, calming, lots of whitespace, organic shapes, gentle curves
+- Professional services: Structured, trustworthy, subtle animations, balanced layouts
+- Creative agencies: Bold, artistic, unconventional layouts, dynamic elements
+- E-commerce: Product-focused, clear CTAs, trust indicators, conversion-optimized
 
-### Typography Scale
-- H1 (Hero): 48-60px, font-weight 700-800
-- H2 (Section): 32-40px, font-weight 600-700
-- H3 (Cards): 20-24px, font-weight 600
-- Body: 16-18px minimum, line-height 1.6-1.75
-- Small text: 14px minimum
+Remember: You're creating a real website, not a template. Be creative.`
 
-### Visual Refinement
-- Shadows: Use shadow-sm with border, NOT heavy drop shadows
-- Border radius: rounded-xl for cards, rounded-lg for buttons
-- Borders: 1px borders in neutral colors for definition
-
-## LAYOUT SYSTEM
-
-### Container
-All sections: mx-auto max-w-7xl px-4 sm:px-6 lg:px-8
-
-### Available Layouts (REQUIRED for every section)
-- **centered**: Text centered, max-w-3xl, classic SaaS look
-- **split**: Image left (40%), text right (60%), product showcase style
-- **split-reverse**: Text left, image right, variation for rhythm
-- **grid**: 2-4 column card grid, responsive
-- **bento**: Asymmetric grid with varied card sizes
-- **stacked**: Full-width vertical stack, text-focused
-- **alternating**: Zigzag pattern for storytelling
-- **cards**: Card-based with consistent styling
-
-### Dark Section Rules
-Use darkSection: true for:
-- Final CTA sections (contrast drives conversion)
-- Stats/trust sections (authority feel)
-- Mid-page breaks (visual rhythm)
-Never: Multiple dark sections in a row
-
-## SECTION BLUEPRINTS
-
-### Hero Section (CRITICAL - sets the tone)
-Required elements:
-1. Badge text (max 40 chars) - business-specific, NOT "Welcome"
-2. Headline (4-8 words, 40-65 chars) - with specific outcome or number
-3. Subheadline (max 150 chars) - explains the how/what
-4. Primary CTA (2-4 words) - action + benefit
-5. Optional: Secondary CTA, trust indicators, hero image description
-
-Layouts: centered, split, split-reverse, bold
-
-### Features Section
-Required: 3-6 items with:
-- Icon (Lucide icon name)
-- Title (3-5 words)
-- Description (1-2 sentences with specific benefit)
-
-Layouts: grid, bento, cards
-
-### Testimonials Section
-Required: 2-4 testimonials with:
-- Specific quote mentioning results/outcomes
-- Full name
-- Title/role
-- Company (if B2B)
-
-Layouts: cards, centered, grid
-
-### Pricing Section
-Required: 2-3 tiers (MAX 3):
-- Clear tier name
-- Price with billing period
-- 4-6 features per tier
-- Highlight recommended tier
-- CTA for each tier
-
-Layout: cards (always)
-
-### CTA Section
-Required:
-- Compelling headline (not "Ready to get started?")
-- Single focused CTA
-- Use darkSection: true
-
-Layout: centered
-
-### FAQ Section
-Required: 4-8 questions addressing:
-- Main objections
-- Common concerns
-- Differentiators
-Use question/answer format
-
-Layout: stacked
-
-## COPY RULES
-
-### Headline Formulas
-- Outcome-focused: "[Achieve X] in [Timeframe]"
-- Problem-solution: "Stop [Pain Point]. Start [Benefit]."
-- Social proof: "[Number] [audience] trust us to [outcome]"
-- Direct value: "[Action] that [specific benefit]"
-
-### CTA Text Rules
-- 2-4 words maximum
-- First person preferred ("Get My Quote" not "Get Your Quote")
-- Action + benefit combo
-- BANNED: "Submit", "Click Here", "Learn More", "Get Started" (generic)
-- GOOD: "Start Free Trial", "Book My Session", "See Pricing", "Download Guide"
-
-### Badge Text Rules
-- Must be unique to THIS business
-- BANNED: "Welcome", "Features", "About", "Get Started"
-- GOOD: "Trusted by 500+ restaurants", "New: AI-powered matching", "California's #1 rated"
-
-## YOUR TASK
-
-Generate premium website content that:
-1. Uses ONLY the brand colors provided (never default to teal/beige)
-2. Has headlines under 8 words with specific outcomes
-3. Creates badge text unique to THIS business
-4. Uses varied layouts (never 3+ identical sections)
-5. Alternates dark sections for visual rhythm
-6. CTAs that are action + benefit (never generic)
-7. Content so specific it could ONLY work for THIS business
-
-QUALITY CHECK: Before finalizing, verify:
-- [ ] No "Welcome to" headlines
-- [ ] No generic CTAs
-- [ ] Badge text is business-specific
-- [ ] At least 2 different layouts used
-- [ ] Dark sections are strategic, not consecutive
-- [ ] All headlines have specifics (numbers, outcomes, timeframes)`
-
+/**
+ * Generate a complete website with actual React code
+ */
 export async function generateWebsite(
   plan: BusinessPlan,
   brand: Brand | null,
   overview: Overview | null,
-  model?: string
-): Promise<Website> {
+  model?: string,
+  workspaceId?: string,
+  onProgress?: PageProgressCallback
+): Promise<GeneratedWebsite> {
   const modelId = getModelId(model || DEFAULT_MODEL)
 
-  // Build context from plan
-  const pagesList = plan.website.pages
-    .map(p => `- ${p.slug}: ${p.purpose} (sections: ${p.sections.join(', ')})`)
-    .join('\n')
+  // Get integration status if workspaceId provided
+  let integrations = {
+    calcom: { connected: false, username: null as string | null, eventSlug: null as string | null },
+    stripe: { connected: false, accountId: null as string | null },
+  }
 
-  // Build brand context
-  const brandColors = brand?.colors as BrandColors | undefined
-  const brandFonts = brand?.fonts as BrandFonts | undefined
+  if (workspaceId) {
+    try {
+      integrations = await getWorkspaceIntegrations(workspaceId)
+    } catch (e) {
+      console.warn('Could not fetch integrations:', e)
+    }
+  }
 
-  const brandContext = brand ? `
-BRAND DESIGN SYSTEM (USE THESE EXACT VALUES):
-- Brand Name: ${brand.name || 'My Business'}
-- Tagline: ${brand.tagline || 'Not set'}
-- Primary Color: ${brandColors?.primary || '#2563eb'}
-- Secondary Color: ${brandColors?.secondary || '#64748b'}
-- Accent Color: ${brandColors?.accent || '#f59e0b'}
-- Background Color: ${brandColors?.background || '#ffffff'}
-- Text Color: ${brandColors?.foreground || '#0f172a'}
-- Muted Background: ${brandColors?.muted || '#f1f5f9'}
-- Heading Font: ${brandFonts?.heading || 'Inter'}
-- Body Font: ${brandFonts?.body || 'Inter'}
-- Border Radius Style: ${brand.border_radius || 'md'}
-- Tone of Voice: ${brand.tone_of_voice || 'professional'}
+  // Build context from brand and overview
+  const brandContext = buildBrandContext(brand)
+  const overviewContext = buildOverviewContext(overview)
+  const businessContext = buildBusinessContext(plan, brandContext, overviewContext)
 
-WRITING GUIDELINES:
-${brand.writing_guidelines || 'Write in a clear, professional manner that builds trust.'}
+  // Determine pages to generate based on business type
+  const pagesToGenerate = determinePages(plan)
 
-IMPORTANT: The generated code will use CSS variables like var(--color-primary), var(--color-secondary), etc.
-Make content decisions that complement these colors - for example, if the primary color is warm/orange, use warm, energetic language.
-If it's cool/blue, use calm, professional language.` : ''
+  // Generate each page as actual React code
+  const pages: GeneratedWebsite['pages'] = []
+  const totalPages = pagesToGenerate.length
 
-  // Build overview context
-  const overviewContext = overview ? `
+  for (let i = 0; i < pagesToGenerate.length; i++) {
+    const pageDef = pagesToGenerate[i]
+    const fileName = pageDef.slug === '/' ? 'Home' : toPascalCase(pageDef.slug)
+
+    // Notify start of page generation
+    onProgress?.({
+      type: 'page_start',
+      name: `${fileName}.tsx`,
+      current: i + 1,
+      total: totalPages,
+    })
+
+    const code = await generatePageCode({
+      pageDef,
+      businessContext,
+      plan,
+      brand,
+      integrations,
+      modelId,
+    })
+    pages.push({
+      slug: pageDef.slug,
+      title: pageDef.title,
+      code,
+    })
+
+    // Notify completion of page generation
+    onProgress?.({
+      type: 'page_done',
+      name: `${fileName}.tsx`,
+      current: i + 1,
+      total: totalPages,
+    })
+  }
+
+  // Generate supporting files
+  const files: Record<string, string> = {}
+
+  // Global CSS with brand variables
+  files['src/index.css'] = generateGlobalCSS(brand)
+
+  // Main entry point
+  files['src/main.tsx'] = generateMainTsx()
+
+  // App.tsx with routing
+  files['src/App.tsx'] = generateAppTsx(pages, brand)
+
+  // Navbar component
+  onProgress?.({ type: 'file_start', name: 'Navbar.tsx' })
+  files['src/components/Navbar.tsx'] = await generateNavbarCode({
+    pages: pagesToGenerate,
+    businessName: brand?.name || plan.business.description.split(' ').slice(0, 2).join(' '),
+    plan,
+    modelId,
+  })
+  onProgress?.({ type: 'file_done', name: 'Navbar.tsx' })
+
+  // Footer component
+  onProgress?.({ type: 'file_start', name: 'Footer.tsx' })
+  files['src/components/Footer.tsx'] = await generateFooterCode({
+    pages: pagesToGenerate,
+    brand,
+    plan,
+    modelId,
+  })
+  onProgress?.({ type: 'file_done', name: 'Footer.tsx' })
+
+  // Integrations config for runtime checks
+  files['src/lib/integrations.ts'] = generateIntegrationsConfig(integrations)
+
+  // useIntegrations hook for preview
+  files['src/hooks/useIntegrations.ts'] = generateUseIntegrationsHook()
+
+  // Add page files
+  for (const page of pages) {
+    const fileName = page.slug === '/' ? 'Home' : toPascalCase(page.slug)
+    files[`src/pages/${fileName}.tsx`] = page.code
+  }
+
+  // Config files
+  files['package.json'] = generatePackageJson(plan, brand)
+  files['tailwind.config.js'] = generateTailwindConfig()
+  files['postcss.config.js'] = generatePostCSSConfig()
+  files['vite.config.ts'] = generateViteConfig()
+  files['index.html'] = generateIndexHtml(brand)
+  files['tsconfig.json'] = generateTSConfig()
+
+  return { pages, files }
+}
+
+/**
+ * Build brand context string for prompts
+ */
+function buildBrandContext(brand: Brand | null): string {
+  if (!brand) return ''
+
+  return `
+BRAND IDENTITY (Apply this styling throughout):
+- Business Name: ${brand.name || 'Not specified'}
+- Tagline: ${brand.tagline || 'Not specified'}
+- Tone of Voice: ${brand.tone_of_voice || 'Professional yet approachable'}
+- Border Radius Style: ${brand.border_radius || 'md'} (none=sharp corners, sm=subtle, md=rounded, lg=very rounded, xl=pill-shaped)
+
+The CSS variables are already configured. Just use the Tailwind classes like bg-primary, text-foreground, etc.`
+}
+
+/**
+ * Build overview context string for prompts
+ */
+function buildOverviewContext(overview: Overview | null): string {
+  if (!overview) return ''
+
+  return `
 BUSINESS CONTEXT (from Lean Canvas):
-- Unique Value Proposition: ${overview.unique_value_proposition || plan.business.uniqueValue}
+- Unique Value Proposition: ${overview.unique_value_proposition || 'Not defined'}
 - High-Level Concept: ${overview.high_level_concept || 'Not defined'}
 - Problems We Solve: ${overview.problems?.join(', ') || 'Not defined'}
 - Our Solutions: ${overview.solutions?.join(', ') || 'Not defined'}
 - Unfair Advantage: ${overview.unfair_advantage || 'Not defined'}
 - Early Adopters: ${overview.early_adopters || 'Not defined'}
-- Key Channels: ${overview.channels?.join(', ') || 'Website'}
 - Customer Segments: ${JSON.stringify(overview.customer_segments) || 'General audience'}
-- Revenue Streams: ${JSON.stringify(overview.revenue_streams) || 'Not defined'}
 
-CRITICAL: Use this information to create compelling, SPECIFIC content:
-- Headlines should directly address the problems listed above
-- Features should map to the solutions
-- CTAs should align with the revenue model
-- Testimonials should reference the problems being solved
-- Badge text should relate to the unique value proposition` : ''
+Use this information to create compelling, SPECIFIC content. Headlines should address problems, features should map to solutions.`
+}
 
-  // Build the base prompt
-  const basePrompt = `Generate complete website content for this business:
-
+/**
+ * Build full business context for prompts
+ */
+function buildBusinessContext(plan: BusinessPlan, brandContext: string, overviewContext: string): string {
+  return `
 BUSINESS:
 - Type: ${plan.business.type}
-- Industry: ${plan.business.industry}
+- Industry: ${plan.business.industry}${plan.business.subIndustry ? ` (${plan.business.subIndustry})` : ''}
 - Description: ${plan.business.description}
 - Unique Value: ${plan.business.uniqueValue}
-${brandContext}
-${overviewContext}
 
 TARGET AUDIENCE:
 - Demographics: ${plan.audience.primary.demographics.join(', ')}
 - Psychographics: ${plan.audience.primary.psychographics.join(', ')}
 - Pain Points: ${plan.audience.primary.painPoints.join(', ')}
 - Goals: ${plan.audience.primary.goals.join(', ')}
+${brandContext}
+${overviewContext}`
+}
 
-BRAND VOICE:
-- Positioning: ${plan.brand.positioning}
-- Personality: Formal ${plan.brand.personality.formal}/10, Playful ${plan.brand.personality.playful}/10, Traditional ${plan.brand.personality.traditional}/10, Bold ${plan.brand.personality.bold}/10, Warm ${plan.brand.personality.warm}/10
-- Voice: ${plan.brand.voiceDescription}
-- Values: ${plan.brand.values.join(', ')}
+/**
+ * Determine which pages to generate based on business type
+ */
+function determinePages(plan: BusinessPlan): PageDefinition[] {
+  const businessType = plan.business.type
+  const industry = plan.business.industry.toLowerCase()
 
-WEBSITE STRUCTURE (from plan):
-${pagesList}
+  // Base pages everyone gets
+  const pages: PageDefinition[] = [
+    { slug: '/', title: 'Home', sections: ['hero', 'features', 'testimonials', 'cta'] },
+    { slug: '/about', title: 'About', sections: ['about', 'team', 'values'] },
+    { slug: '/contact', title: 'Contact', sections: ['contact', 'location'] },
+  ]
 
-NAVIGATION:
-${plan.website.navigation.map(n => `- ${n.label} → ${n.href}${n.isPrimaryCTA ? ' (CTA)' : ''}`).join('\n')}
-
-PRIMARY CTA:
-- Text: ${plan.website.primaryCTA.text}
-- Action: ${plan.website.primaryCTA.action}
-
-CONVERSION GOAL:
-${plan.flow.primaryConversion}
-
-REQUIRED INTEGRATIONS:
-${plan.integrations.required.map(i => `- ${i.provider} on ${i.usedOn.join(', ')}`).join('\n')}
-
-Generate website content that:
-1. Uses the exact page structure from the plan
-2. Matches the brand voice, colors, and typography feel
-3. Addresses the audience's SPECIFIC pain points from the business context
-4. Drives toward the primary conversion goal
-5. Includes rich, SPECIFIC content that references the actual business problems and solutions - NO generic filler
-6. Has compelling headlines that speak directly to THIS audience's struggles
-7. IMPORTANT: Specify a layout for EVERY section (centered, split, grid, bento, cards, stacked, alternating)
-8. Use darkSection: true for CTAs and sections that need contrast
-9. Badge text must be unique and specific to THIS business - NOT generic like "Welcome" or "Features"
-10. Content should feel custom-written for this exact business, not templated
-
-For each page, generate all the sections specified in the plan with full content.
-Make testimonials feel real - reference specific outcomes that relate to the problems solved.
-Make pricing realistic for the positioning.
-Make FAQ address real objections this specific audience would have based on the pain points.
-Choose layouts based on the industry type and section purpose.`
-
-  // Validation and retry logic
-  const MAX_ATTEMPTS = 2
-  let attempts = 0
-  let lastIssues: string = ''
-
-  while (attempts < MAX_ATTEMPTS) {
-    const prompt = attempts === 0
-      ? basePrompt
-      : `${basePrompt}\n\n${lastIssues}\n\nPlease regenerate with these issues fixed.`
-
-    const { object: website } = await generateObject({
-      model: openrouter(modelId),
-      schema: WebsiteSchema,
-      system: WEBSITE_SYSTEM_PROMPT,
-      prompt,
-    })
-
-    // Validate the generated website
-    const issues = validateWebsite(website)
-
-    // If no blocking issues, return the website
-    if (!hasBlockingIssues(issues)) {
-      return website
-    }
-
-    // Log issues for debugging
-    console.warn(`Website generation attempt ${attempts + 1} had quality issues:`, issues.filter(i => i.severity === 'error'))
-
-    // Format issues for retry
-    lastIssues = formatIssuesForRetry(issues)
-    attempts++
+  // Business-specific pages
+  if (['restaurant', 'cafe', 'bar', 'bakery', 'food'].some(t => industry.includes(t))) {
+    pages.push({ slug: '/menu', title: 'Menu', sections: ['menu'] })
+    pages.push({ slug: '/reservations', title: 'Reservations', sections: ['booking'] })
+  } else if (['salon', 'spa', 'fitness', 'wellness', 'yoga', 'gym', 'healthcare', 'dental', 'medical'].some(t => industry.includes(t))) {
+    pages.push({ slug: '/services', title: 'Services', sections: ['services', 'pricing'] })
+    pages.push({ slug: '/book', title: 'Book', sections: ['booking'] })
+  } else if (businessType === 'saas' || ['software', 'app', 'tech', 'platform'].some(t => industry.includes(t))) {
+    pages.push({ slug: '/pricing', title: 'Pricing', sections: ['pricing', 'faq'] })
+    pages.push({ slug: '/features', title: 'Features', sections: ['features', 'comparison'] })
+  } else if (['ecommerce', 'retail', 'store', 'shop'].some(t => industry.includes(t))) {
+    pages.push({ slug: '/products', title: 'Products', sections: ['products'] })
+  } else if (businessType === 'agency' || ['consulting', 'freelance', 'design', 'marketing', 'creative'].some(t => industry.includes(t))) {
+    pages.push({ slug: '/services', title: 'Services', sections: ['services', 'process'] })
+    pages.push({ slug: '/work', title: 'Work', sections: ['portfolio', 'case-studies'] })
+  } else if (businessType === 'service') {
+    pages.push({ slug: '/services', title: 'Services', sections: ['services', 'pricing'] })
   }
 
-  // If we've exhausted retries, generate one more time without validation
-  // (better to return something than fail completely)
-  console.warn('Website generation exhausted retries, returning best effort')
-  const { object: website } = await generateObject({
+  return pages
+}
+
+/**
+ * Generate a single page's React code
+ */
+async function generatePageCode(input: {
+  pageDef: PageDefinition
+  businessContext: string
+  plan: BusinessPlan
+  brand: Brand | null
+  integrations: {
+    calcom: { connected: boolean; username: string | null; eventSlug: string | null }
+    stripe: { connected: boolean; accountId: string | null }
+  }
+  modelId: string
+}): Promise<string> {
+  const { pageDef, businessContext, plan, integrations, modelId } = input
+
+  // Build page-specific prompt
+  const pagePrompt = buildPagePrompt(pageDef, plan, integrations)
+
+  const { text } = await generateText({
     model: openrouter(modelId),
-    schema: WebsiteSchema,
     system: WEBSITE_SYSTEM_PROMPT,
-    prompt: basePrompt,
+    prompt: `${businessContext}
+
+---
+
+${pagePrompt}
+
+Remember:
+- Use ONLY CSS variable Tailwind classes (bg-primary, text-foreground, bg-muted, etc.)
+- Make it visually unique and creative for this specific business
+- Include proper imports at the top
+- Export default function with the correct name
+- NO hardcoded colors like bg-gray-*, text-white, #hex values`,
   })
 
-  return website
+  return cleanCodeOutput(text)
 }
 
-// Helper to get section display name
-export function getSectionDisplayName(type: WebsiteSection['type']): string {
-  const names: Record<WebsiteSection['type'], string> = {
-    hero: 'Hero Section',
-    features: 'Features',
-    benefits: 'Benefits',
-    testimonials: 'Testimonials',
-    pricing: 'Pricing',
-    faq: 'FAQ',
-    team: 'Team',
-    about: 'About',
-    cta: 'Call to Action',
-    gallery: 'Gallery',
-    contact: 'Contact',
-    booking: 'Booking',
-    products: 'Products',
-    stats: 'Statistics',
-    process: 'How It Works',
-    trust: 'Trust Badges',
+/**
+ * Build page-specific prompt based on page type
+ */
+function buildPagePrompt(
+  pageDef: PageDefinition,
+  plan: BusinessPlan,
+  integrations: { calcom: { connected: boolean; username: string | null; eventSlug: string | null }; stripe: { connected: boolean } }
+): string {
+  const { slug } = pageDef
+
+  if (slug === '/') {
+    return `Create a stunning HOME page that makes visitors want to stay and explore.
+
+Include these sections:
+1. HERO - Make it impactful and unique to this business
+   - Compelling headline (4-8 words max, specific to this business, addresses a pain point or promise)
+   - Subheadline explaining the value proposition
+   - Primary CTA button (Link to /contact or /book or /services)
+   - Secondary CTA or trust indicators
+   - Decorative visual elements (gradients, blurred shapes, patterns)
+
+2. FEATURES/BENEFITS - Why choose this business (3-6 key points)
+   - Icons from lucide-react
+   - Brief, compelling descriptions
+   - Creative layout (bento grid, cards with hover effects, alternating rows)
+
+3. SOCIAL PROOF - Build trust
+   - 2-3 testimonials with names and roles
+   - Stats or metrics if relevant
+   - Trust badges or partner logos area
+
+4. CTA SECTION - Drive action
+   - Compelling headline
+   - Clear action button
+   - Maybe add urgency or a bonus
+
+Make the layout CREATIVE and UNIQUE. Use decorative elements, gradients, overlapping shapes.
+The design should reflect the business type and industry.`
   }
-  return names[type]
+
+  if (slug === '/menu') {
+    return `Create a MENU page for this ${plan.business.industry} business.
+
+Include:
+1. Page header with appetizing description and decorative elements
+2. Menu categories (e.g., Starters, Mains, Desserts, Drinks - adapt to the cuisine)
+3. Menu items displayed in a creative grid or card layout with:
+   - Dish name (make them authentic and appetizing)
+   - Mouth-watering description
+   - Price
+   - Dietary tags where appropriate (V, VG, GF, Spicy, etc.)
+4. Featured/special items highlighted with visual emphasis
+5. CTA to make a reservation (Link to /reservations)
+
+Make it visually appetizing. Use creative layouts - not just a boring list.
+Consider the cuisine type and make the design match (elegant for fine dining, casual for cafes, etc.)`
+  }
+
+  if (slug === '/reservations' || slug === '/book') {
+    const hasCalcom = integrations.calcom.connected
+
+    return `Create a ${slug === '/reservations' ? 'RESERVATIONS' : 'BOOKING'} page.
+
+Include:
+1. Page header with welcoming copy explaining the booking process
+2. ${hasCalcom
+      ? `Cal.com booking widget integration:
+   \`\`\`tsx
+   import { useIntegrations } from '../hooks/useIntegrations'
+   // In component:
+   const { calcom } = useIntegrations()
+   // In JSX:
+   {calcom.connected ? (
+     <div className="bg-muted rounded-2xl p-4 min-h-[500px]">
+       <iframe
+         src={\`https://cal.com/\${calcom.username}/\${calcom.eventSlug}?embed=true&theme=light\`}
+         className="w-full h-[500px] border-0 rounded-xl"
+         title="Book an appointment"
+       />
+     </div>
+   ) : (
+     <div className="bg-muted rounded-2xl p-12 text-center">
+       <Calendar className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+       <h3 className="text-xl font-semibold mb-2">Online Booking Coming Soon</h3>
+       <p className="text-muted-foreground mb-6">Connect Cal.com in settings to enable online booking</p>
+       <p className="text-sm text-muted-foreground">Or call us to book: [Phone Number]</p>
+     </div>
+   )}`
+      : `Placeholder for future booking integration:
+   <div className="bg-muted rounded-2xl p-12 text-center">
+     <Calendar className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
+     <h3 className="text-xl font-semibold mb-2">Online Booking Coming Soon</h3>
+     <p className="text-muted-foreground mb-6">We're setting up online booking. In the meantime:</p>
+     <div className="space-y-2 text-muted-foreground">
+       <p>Call us: [Phone Number]</p>
+       <p>Email: [Email Address]</p>
+     </div>
+   </div>`}
+3. Contact information for phone/email bookings as fallback
+4. What to expect section or booking policy info
+
+Make it feel easy and inviting to book. Add some personality.`
+  }
+
+  if (slug === '/services') {
+    return `Create a SERVICES page for this ${plan.business.type} business in ${plan.business.industry}.
+
+Include:
+1. Page header with overview of what you offer
+2. Individual service cards (3-6 services) with:
+   - Service name
+   - Compelling description
+   - Duration (if time-based)
+   - Price or "Starting from $X"
+   - Icon from lucide-react
+   - Book/Contact button
+3. Process explanation section (How it works - 3-4 steps)
+4. FAQ section about the services (4-6 questions)
+5. CTA to book or contact
+
+Use a creative grid or card layout. Make each service feel premium and valuable.
+Consider adding hover effects, icons, and visual hierarchy.`
+  }
+
+  if (slug === '/pricing') {
+    return `Create a PRICING page.
+
+Include:
+1. Headline about the value customers get
+2. 2-3 pricing tiers displayed as cards with:
+   - Tier name (e.g., Starter, Professional, Enterprise)
+   - Price (monthly with /mo)
+   - List of features with checkmarks
+   - CTA button
+   - Highlight the recommended tier with: ring-2 ring-primary scale-105
+   - Add a "Most Popular" badge to the recommended tier
+3. Feature comparison table (optional, if complex)
+4. FAQ about pricing (4-5 questions)
+5. Money-back guarantee or trust elements
+
+Make the recommended tier clearly stand out.
+Use creative design - not just three plain boxes.`
+  }
+
+  if (slug === '/contact') {
+    return `Create a CONTACT page.
+
+Include:
+1. Friendly, welcoming headline
+2. Contact form with:
+   - Name field (required)
+   - Email field (required)
+   - Phone field (optional)
+   - Subject or inquiry type (optional select)
+   - Message textarea (required)
+   - Submit button with loading state
+   - Add useState for form handling and success message
+
+3. Direct contact information section:
+   - Email address with Mail icon
+   - Phone number with Phone icon
+   - Physical address with MapPin icon
+   - Business hours with Clock icon
+
+4. Map placeholder or embed area
+
+Use a split layout or creative arrangement. Not just a centered form.
+Add form state management with useState for success/error messages.`
+  }
+
+  if (slug === '/about') {
+    return `Create an ABOUT page.
+
+Include:
+1. "Our Story" section with compelling narrative
+2. Mission and vision statements
+3. Core values displayed creatively (icons + text)
+4. Team section with placeholder cards (if relevant):
+   - Photo placeholder (bg-muted rounded-full aspect-square)
+   - Name
+   - Role
+   - Brief bio
+5. "Why Choose Us" section with differentiators
+6. CTA to contact or book
+
+Make it feel personal and authentic to this business type.
+Use creative layouts - not just walls of text.`
+  }
+
+  if (slug === '/work' || slug === '/portfolio') {
+    return `Create a PORTFOLIO/WORK page showcasing projects.
+
+Include:
+1. Page header with brief intro about the work
+2. Project grid/gallery with 4-6 placeholder projects:
+   - Project image placeholder (bg-muted aspect-video)
+   - Project name
+   - Brief description
+   - Client name or category
+   - Hover effect revealing more info
+3. Filtering by category (if relevant)
+4. Case study highlights or featured work section
+5. CTA to discuss a project
+
+Use creative grid layouts with varying sizes for visual interest.`
+  }
+
+  if (slug === '/products') {
+    return `Create a PRODUCTS page.
+
+Include:
+1. Page header with product category overview
+2. Product grid with 6-8 placeholder products:
+   - Product image placeholder (bg-muted aspect-square)
+   - Product name
+   - Brief description
+   - Price
+   - "Add to Cart" or "View Details" button
+   - Hover effect with quick actions
+3. Filter/sort options (placeholder)
+4. Category navigation
+5. Featured products section
+
+Make it feel like a real e-commerce experience with proper product cards.`
+  }
+
+  if (slug === '/features') {
+    return `Create a FEATURES page showcasing product/service capabilities.
+
+Include:
+1. Hero section with main value proposition
+2. Feature grid with 6-9 features:
+   - Icon from lucide-react
+   - Feature name
+   - Description
+   - Visual element or illustration placeholder
+3. Detailed feature sections with alternating layouts:
+   - Image/visual on one side
+   - Description and bullet points on the other
+   - Alternate left/right for visual interest
+4. Comparison section (us vs others or before/after)
+5. CTA to get started or learn more
+
+Use creative layouts with plenty of visual elements.`
+  }
+
+  // Default generic page
+  return `Create a ${pageDef.title} page with sections: ${pageDef.sections.join(', ')}.
+Make it relevant and creative for a ${plan.business.type} business in ${plan.business.industry}.
+Include appropriate content, CTAs, and visual design elements.`
 }
+
+/**
+ * Generate Navbar component
+ */
+async function generateNavbarCode(input: {
+  pages: PageDefinition[]
+  businessName: string
+  plan: BusinessPlan
+  modelId: string
+}): Promise<string> {
+  const { pages, businessName, modelId } = input
+
+  const navLinks = pages.map(p => `{ label: '${p.title}', href: '${p.slug}' }`).join(',\n    ')
+
+  const { text } = await generateText({
+    model: openrouter(modelId),
+    system: WEBSITE_SYSTEM_PROMPT,
+    prompt: `Create a responsive Navbar component.
+
+Business name: ${businessName}
+
+Navigation links:
+${pages.map(p => `- ${p.title} → "${p.slug}"`).join('\n')}
+
+Requirements:
+1. Sticky navbar with backdrop blur: sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border
+2. Logo/business name on left as Link to "/"
+3. Desktop navigation links (hidden on mobile, visible on md:)
+4. Mobile hamburger menu with useState toggle (Menu/X icons from lucide-react)
+5. Primary CTA button that stands out (the last nav item or Contact/Book)
+6. Smooth transitions on mobile menu open/close
+
+Code structure:
+\`\`\`tsx
+'use client'
+
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Menu, X } from 'lucide-react'
+
+const navLinks = [
+    ${navLinks}
+]
+
+export default function Navbar() {
+  const [isOpen, setIsOpen] = useState(false)
+
+  return (
+    <nav className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
+      {/* Your creative implementation */}
+    </nav>
+  )
+}
+\`\`\`
+
+Use ONLY CSS variable classes. Make it clean and professional.`,
+  })
+
+  return cleanCodeOutput(text)
+}
+
+/**
+ * Generate Footer component
+ */
+async function generateFooterCode(input: {
+  pages: PageDefinition[]
+  brand: Brand | null
+  plan: BusinessPlan
+  modelId: string
+}): Promise<string> {
+  const { pages, brand, plan, modelId } = input
+
+  const { text } = await generateText({
+    model: openrouter(modelId),
+    system: WEBSITE_SYSTEM_PROMPT,
+    prompt: `Create a Footer component.
+
+Business: ${brand?.name || plan.business.description.split(' ').slice(0, 3).join(' ')}
+Tagline: ${brand?.tagline || ''}
+
+Navigation pages: ${pages.map(p => p.title).join(', ')}
+
+Include:
+1. Business name and tagline
+2. Navigation links (Link components to each page)
+3. Contact info placeholders (email, phone, address)
+4. Social media icon placeholders
+5. Copyright with dynamic year: {new Date().getFullYear()}
+
+Style options:
+- Dark footer: bg-foreground text-background
+- Light footer: bg-muted text-foreground
+Choose what fits the brand better.
+
+Use ONLY CSS variable classes. Keep it clean and organized.`,
+  })
+
+  return cleanCodeOutput(text)
+}
+
+/**
+ * Generate global CSS with brand variables
+ */
+function generateGlobalCSS(brand: Brand | null): string {
+  const colors = brand?.colors || {}
+  const fonts = brand?.fonts || { heading: 'Inter', body: 'Inter', headingWeight: '700', bodyWeight: '400' }
+  const radius = brand?.border_radius || 'md'
+
+  const radiusValue = {
+    none: '0',
+    sm: '0.25rem',
+    md: '0.375rem',
+    lg: '0.5rem',
+    xl: '0.75rem',
+    full: '9999px',
+  }[radius] || '0.375rem'
+
+  // Default colors if not provided
+  const primary = colors.primary || '#3b82f6'
+  const secondary = colors.secondary || '#6366f1'
+  const accent = colors.accent || '#f59e0b'
+  const background = colors.background || '#ffffff'
+  const foreground = colors.foreground || '#0f172a'
+  const muted = colors.muted || '#f1f5f9'
+  const mutedForeground = colors.mutedForeground || '#64748b'
+
+  return `@import url('https://fonts.googleapis.com/css2?family=${encodeURIComponent(fonts.heading || 'Inter')}:wght@400;500;600;700;800&family=${encodeURIComponent(fonts.body || 'Inter')}:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: ${hexToHSL(background)};
+    --foreground: ${hexToHSL(foreground)};
+
+    --primary: ${hexToHSL(primary)};
+    --primary-foreground: ${getContrastColor(primary)};
+
+    --secondary: ${hexToHSL(secondary)};
+    --secondary-foreground: ${getContrastColor(secondary)};
+
+    --accent: ${hexToHSL(accent)};
+    --accent-foreground: ${getContrastColor(accent)};
+
+    --muted: ${hexToHSL(muted)};
+    --muted-foreground: ${hexToHSL(mutedForeground)};
+
+    --border: ${hexToHSL(muted)};
+    --input: ${hexToHSL(muted)};
+    --ring: ${hexToHSL(primary)};
+
+    --radius: ${radiusValue};
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: '${fonts.body || 'Inter'}', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: '${fonts.heading || 'Inter'}', system-ui, sans-serif;
+    font-weight: ${fonts.headingWeight || '700'};
+  }
+}
+`
+}
+
+/**
+ * Generate main.tsx entry point
+ */
+function generateMainTsx(): string {
+  return `import React from 'react'
+import ReactDOM from 'react-dom/client'
+import { BrowserRouter } from 'react-router-dom'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>
+)
+`
+}
+
+/**
+ * Generate App.tsx with routing
+ */
+function generateAppTsx(pages: GeneratedWebsite['pages'], brand: Brand | null): string {
+  const imports = pages.map(p => {
+    const name = p.slug === '/' ? 'Home' : toPascalCase(p.slug)
+    return `import ${name} from './pages/${name}'`
+  }).join('\n')
+
+  const routes = pages.map(p => {
+    const name = p.slug === '/' ? 'Home' : toPascalCase(p.slug)
+    return `          <Route path="${p.slug}" element={<${name} />} />`
+  }).join('\n')
+
+  return `import { Routes, Route } from 'react-router-dom'
+import Navbar from './components/Navbar'
+import Footer from './components/Footer'
+${imports}
+
+export default function App() {
+  return (
+    <div className="min-h-screen flex flex-col bg-background text-foreground">
+      <Navbar />
+      <main className="flex-1">
+        <Routes>
+${routes}
+        </Routes>
+      </main>
+      <Footer />
+    </div>
+  )
+}
+`
+}
+
+/**
+ * Generate integrations config file for preview
+ */
+function generateIntegrationsConfig(integrations: {
+  calcom: { connected: boolean; username: string | null; eventSlug: string | null }
+  stripe: { connected: boolean; accountId: string | null }
+}): string {
+  return `// Auto-generated integrations config
+// This file is regenerated when integrations change
+
+export const integrations = {
+  calcom: {
+    connected: ${integrations.calcom.connected},
+    username: ${integrations.calcom.username ? `'${integrations.calcom.username}'` : 'null'},
+    eventSlug: ${integrations.calcom.eventSlug ? `'${integrations.calcom.eventSlug}'` : "'30min'"},
+  },
+  stripe: {
+    connected: ${integrations.stripe.connected},
+    accountId: ${integrations.stripe.accountId ? `'${integrations.stripe.accountId}'` : 'null'},
+  },
+} as const
+
+export type Integrations = typeof integrations
+`
+}
+
+/**
+ * Generate useIntegrations hook for preview
+ */
+function generateUseIntegrationsHook(): string {
+  return `import { integrations } from '../lib/integrations'
+
+/**
+ * Hook to access integration configuration
+ * The config is generated at build time and updated when integrations change
+ */
+export function useIntegrations() {
+  return integrations
+}
+
+export default useIntegrations
+`
+}
+
+/**
+ * Generate Tailwind config
+ */
+function generateTailwindConfig(): string {
+  return `/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  theme: {
+    extend: {
+      colors: {
+        background: 'hsl(var(--background))',
+        foreground: 'hsl(var(--foreground))',
+        primary: {
+          DEFAULT: 'hsl(var(--primary))',
+          foreground: 'hsl(var(--primary-foreground))',
+        },
+        secondary: {
+          DEFAULT: 'hsl(var(--secondary))',
+          foreground: 'hsl(var(--secondary-foreground))',
+        },
+        accent: {
+          DEFAULT: 'hsl(var(--accent))',
+          foreground: 'hsl(var(--accent-foreground))',
+        },
+        muted: {
+          DEFAULT: 'hsl(var(--muted))',
+          foreground: 'hsl(var(--muted-foreground))',
+        },
+        border: 'hsl(var(--border))',
+        input: 'hsl(var(--input))',
+        ring: 'hsl(var(--ring))',
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
+    },
+  },
+  plugins: [],
+}
+`
+}
+
+/**
+ * Generate PostCSS config
+ */
+function generatePostCSSConfig(): string {
+  return `export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+`
+}
+
+/**
+ * Generate Vite config
+ */
+function generateViteConfig(): string {
+  return `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    host: true,
+    port: 5173,
+  },
+})
+`
+}
+
+/**
+ * Generate index.html
+ */
+function generateIndexHtml(brand: Brand | null): string {
+  const title = brand?.name || 'Website'
+  const description = brand?.tagline || ''
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="${description}" />
+    <title>${title}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+`
+}
+
+/**
+ * Generate tsconfig.json
+ */
+function generateTSConfig(): string {
+  return JSON.stringify({
+    compilerOptions: {
+      target: 'ES2020',
+      useDefineForClassFields: true,
+      lib: ['ES2020', 'DOM', 'DOM.Iterable'],
+      module: 'ESNext',
+      skipLibCheck: true,
+      moduleResolution: 'bundler',
+      allowImportingTsExtensions: true,
+      resolveJsonModule: true,
+      isolatedModules: true,
+      noEmit: true,
+      jsx: 'react-jsx',
+      strict: true,
+      noUnusedLocals: false,
+      noUnusedParameters: false,
+      noFallthroughCasesInSwitch: true,
+    },
+    include: ['src'],
+  }, null, 2)
+}
+
+/**
+ * Generate package.json
+ */
+function generatePackageJson(plan: BusinessPlan, brand: Brand | null): string {
+  const name = (brand?.name || plan.business.description)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50) || 'website'
+
+  return JSON.stringify({
+    name,
+    private: true,
+    version: '0.0.1',
+    type: 'module',
+    scripts: {
+      dev: 'vite --host',
+      build: 'tsc && vite build',
+      preview: 'vite preview',
+    },
+    dependencies: {
+      'react': '^18.2.0',
+      'react-dom': '^18.2.0',
+      'react-router-dom': '^6.20.0',
+      'lucide-react': '^0.294.0',
+    },
+    devDependencies: {
+      '@types/react': '^18.2.37',
+      '@types/react-dom': '^18.2.15',
+      '@vitejs/plugin-react': '^4.2.0',
+      'autoprefixer': '^10.4.16',
+      'postcss': '^8.4.31',
+      'tailwindcss': '^3.3.5',
+      'typescript': '^5.2.2',
+      'vite': '^5.0.0',
+    },
+  }, null, 2)
+}
+
+// Utility functions
+
+/**
+ * Convert slug to PascalCase
+ */
+function toPascalCase(str: string): string {
+  return str
+    .replace(/^\//, '')
+    .replace(/[-\/]/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('')
+}
+
+/**
+ * Get contrasting foreground color as HSL
+ */
+function getContrastColor(hex: string): string {
+  if (!hex || !hex.startsWith('#')) return '0 0% 100%'
+
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+  return luminance > 0.5 ? '0 0% 9%' : '0 0% 100%'
+}
+
+/**
+ * Clean code output from LLM - remove markdown fences
+ */
+function cleanCodeOutput(text: string): string {
+  let code = text.trim()
+
+  // Remove markdown code fences
+  if (code.startsWith('```')) {
+    code = code.replace(/^```(?:tsx?|jsx?|typescript|javascript)?\n?/, '').replace(/\n?```$/, '')
+  }
+
+  return code.trim()
+}
+
+// Export types for use elsewhere
+export type { Brand, Overview, PageDefinition }

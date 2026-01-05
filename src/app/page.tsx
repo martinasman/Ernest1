@@ -21,8 +21,19 @@ import {
   Plus,
   Loader2,
   LogOut,
-  FileText
+  FileText,
+  X
 } from 'lucide-react'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 interface Workspace {
   id: string
@@ -63,6 +74,8 @@ export default function Home() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [isLoadingAuth, setIsLoadingAuth] = useState(true)
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false)
+  const [workspaceToDelete, setWorkspaceToDelete] = useState<Workspace | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
   const { selectedModel, setModel } = useModelStore()
 
   // Check auth state and fetch workspaces on mount
@@ -145,53 +158,72 @@ export default function Home() {
         if (workspaces.length > 0) {
           router.push(`/${workspaces[0].slug}?prompt=${encodeURIComponent(prompt)}`)
         } else {
-          const { data: newWorkspace, error } = await supabase
-            .from('workspaces')
-            .insert({
-              name: 'My Business',
-              slug: 'my-business-' + Date.now(),
-              description: 'Created from home',
-            })
-            .select()
-            .single()
+          // Call API to create workspace (handles RLS, creates member/brand/overview)
+          const response = await fetch('/api/auth/setup-workspace', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: user.id, email: user.email }),
+          })
 
-          if (error) throw error
-          router.push(`/${newWorkspace.slug}?prompt=${encodeURIComponent(prompt)}`)
+          if (!response.ok) throw new Error('Failed to create workspace')
+
+          const { slug } = await response.json()
+          router.push(`/${slug}?prompt=${encodeURIComponent(prompt)}`)
         }
       } else {
         router.push(`/login?prompt=${encodeURIComponent(prompt)}`)
       }
     } catch (error) {
-      router.push(`/login?prompt=${encodeURIComponent(prompt)}`)
+      console.error('Error handling prompt:', error)
     } finally {
       setIsSubmitting(false)
     }
   }
 
   const handleCreateWorkspace = async () => {
+    if (!user) return
     setIsCreatingWorkspace(true)
 
     try {
-      const supabase = createClient()
-      const timestamp = Date.now()
+      // Call API to create workspace (handles RLS, creates member/brand/overview)
+      const response = await fetch('/api/auth/setup-workspace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, email: user.email }),
+      })
 
-      const { data: newWorkspace, error } = await supabase
-        .from('workspaces')
-        .insert({
-          name: 'New Project',
-          slug: `new-project-${timestamp}`,
-          description: null,
-        })
-        .select()
-        .single()
+      if (!response.ok) throw new Error('Failed to create workspace')
 
-      if (error) throw error
-
-      router.push(`/${newWorkspace.slug}`)
+      const { slug } = await response.json()
+      router.push(`/${slug}`)
     } catch (error) {
       console.error('Error creating workspace:', error)
     } finally {
       setIsCreatingWorkspace(false)
+    }
+  }
+
+  const handleDeleteWorkspace = async () => {
+    if (!workspaceToDelete) return
+    setIsDeleting(true)
+
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceToDelete.id}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to delete workspace')
+      }
+
+      // Remove from local state
+      setWorkspaces(prev => prev.filter(w => w.id !== workspaceToDelete.id))
+      setWorkspaceToDelete(null)
+    } catch (error) {
+      console.error('Error deleting workspace:', error)
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -290,13 +322,25 @@ export default function Home() {
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {workspaces.map((workspace) => (
-                <Link key={workspace.id} href={`/${workspace.slug}`}>
-                  <div className="p-4 rounded-xl bg-gray-50 hover:bg-gray-100 transition-all border border-gray-200 hover:border-[#c8ff00]/50 group cursor-pointer">
-                    {/* Header: Name + Corner Preview */}
-                    <div className="flex items-start justify-between gap-3 mb-2">
-                      <h3 className="font-medium text-gray-900 group-hover:text-[#9acd00] transition-colors">
-                        {workspace.name}
-                      </h3>
+                <div key={workspace.id} className="relative group">
+                  {/* Delete Button */}
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setWorkspaceToDelete(workspace)
+                    }}
+                    className="absolute top-2 right-2 z-10 p-1.5 rounded-full bg-gray-200 hover:bg-red-100 hover:text-red-600 text-gray-500 opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                  <Link href={`/${workspace.slug}`}>
+                    <div className="p-4 rounded-xl bg-gray-50 hover:bg-gray-100 transition-all border border-gray-200 hover:border-[#c8ff00]/50 cursor-pointer h-full">
+                      {/* Header: Name + Corner Preview */}
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <h3 className="font-medium text-gray-900 group-hover:text-[#9acd00] transition-colors">
+                          {workspace.name}
+                        </h3>
                       {/* Corner Preview */}
                       <div className="w-16 h-12 rounded-md bg-gray-200 overflow-hidden flex-shrink-0">
                         {workspace.preview_url ? (
@@ -349,6 +393,7 @@ export default function Home() {
                     </p>
                   </div>
                 </Link>
+              </div>
               ))}
 
               {/* New Project Card */}
@@ -384,6 +429,35 @@ export default function Home() {
             )}
           </div>
         </div>
+
+        {/* Delete Confirmation Dialog */}
+        <AlertDialog open={!!workspaceToDelete} onOpenChange={(open) => !open && setWorkspaceToDelete(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete project?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete <span className="font-medium text-gray-900">{workspaceToDelete?.name}</span> and all its data including the website, tools, and brand settings. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteWorkspace}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     )
   }

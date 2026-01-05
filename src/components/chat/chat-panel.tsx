@@ -11,7 +11,6 @@ import { useUIStore, type WebsiteSelection, type OverviewSelection } from '@/sto
 import { useGenerationStore, getTaskDisplayName, GENERATION_STEPS } from '@/stores/generation-store'
 import { ModelPicker } from '@/components/ui/model-picker'
 import { InlineTodoList, type TodoItem } from './inline-todo-list'
-import { getSectionDisplayName } from '@/lib/ai/generation/website-generator'
 
 interface Message {
   id: string
@@ -42,7 +41,11 @@ export function ChatPanel() {
     if (!selectedElement) return null
     if (selectedElement.type === 'website') {
       const ws = selectedElement as WebsiteSelection
-      return getSectionDisplayName(ws.sectionType as Parameters<typeof getSectionDisplayName>[0])
+      // Format section type as readable label (e.g., 'hero-section' -> 'Hero Section')
+      return ws.sectionType
+        .split(/[-_]/)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ')
     }
     if (selectedElement.type === 'overview') {
       const os = selectedElement as OverviewSelection
@@ -96,45 +99,6 @@ export function ChatPanel() {
     setError(null)
 
     try {
-      // Check if we're editing a website section
-      if (selectedElement?.type === 'website') {
-        const ws = selectedElement as WebsiteSelection
-        const editingLabel = getEditingLabel()
-
-        // Call the edit-section API
-        const response = await fetch('/api/ai/edit-section', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            workspaceId: workspace.id,
-            pageSlug: ws.pageSlug,
-            sectionIndex: ws.sectionIndex,
-            prompt: input.trim(),
-            model: selectedModel,
-          })
-        })
-
-        if (!response.ok) {
-          const error = await response.json()
-          throw new Error(error.error || 'Failed to update section')
-        }
-
-        // Add success message
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: `Updated the ${editingLabel}. The changes have been applied.`
-        }
-        setLocalMessages(prev => [...prev, assistantMessage])
-
-        // Refetch workspace to get updated data
-        refetch()
-
-        // Clear selection after successful edit
-        clearSelection()
-        return
-      }
-
       // Check if we're editing an overview field
       if (selectedElement?.type === 'overview') {
         const os = selectedElement as OverviewSelection

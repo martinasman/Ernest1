@@ -8,5 +8,3 @@ export type { FlyMachine, CreateMachineOptions, MachineStatus } from './fly-mach
 
 export { previewService } from './preview-service'
 export type { PreviewSession, StartPreviewResult } from './preview-service'
-
-export { convertWebsiteToFiles } from './website-to-files'

@@ -26,13 +26,19 @@ export async function POST(req: Request) {
 
     const existingContext = (workspace?.ai_context as Record<string, unknown>) || {}
 
+    // Reset stale generated artifacts when creating a new plan
+    const cleanedContext = {
+      ...existingContext,
+      businessPlan: plan,
+      website: null,
+      flow: null,
+      flowReactFlow: null,
+    }
+
     const { error } = await supabase
       .from('workspaces')
       .update({
-        ai_context: {
-          ...existingContext,
-          businessPlan: plan,
-        },
+        ai_context: cleanedContext,
         business_description: prompt,
         updated_at: new Date().toISOString(),
       })

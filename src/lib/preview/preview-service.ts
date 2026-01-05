@@ -31,6 +31,22 @@ export interface StartPreviewResult {
 }
 
 class PreviewService {
+  private async waitForSyncServer(syncUrl: string, attempts = 20, timeoutMs = 4000) {
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
+        const res = await fetch(`${syncUrl}/health`, { signal: controller.signal })
+        clearTimeout(timer)
+        if (res.ok) return
+      } catch {
+        // ignore and retry
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+    }
+    throw new Error(`Preview VM not reachable yet at ${syncUrl}. Please retry.`)
+  }
+
   /**
    * Get active preview session for a workspace
    */
@@ -112,6 +128,10 @@ class PreviewService {
     // Wait for machine to start
     try {
       const startedMachine = await flyMachineManager.waitForState(machine.id, 'started', 120000)
+
+      // Give DNS a brief window to propagate before we hand back the URLs
+      await new Promise((resolve) => setTimeout(resolve, 5000))
+
       const urls = flyMachineManager.getUrls(startedMachine)
 
       // Update session with URLs
@@ -197,6 +217,9 @@ class PreviewService {
     if (!session || session.status !== 'running' || !session.sync_url) {
       throw new Error('No active preview session')
     }
+
+    // Wait for sync server DNS/health to be ready (avoids ENOTFOUND right after start)
+    await this.waitForSyncServer(session.sync_url)
 
     // Send files to sync server
     const response = await fetch(`${session.sync_url}/sync`, {
