@@ -49,6 +49,10 @@ interface UIState {
   isEditing: boolean
   setIsEditing: (value: boolean) => void
 
+  // Working status for shimmer indicator
+  workingStatus: string | null
+  setWorkingStatus: (status: string | null) => void
+
   // Version restore (set by chat panel, called by header)
   restoreVersion: RestoreVersionCallback | null
   setRestoreVersionCallback: (callback: RestoreVersionCallback | null) => void
@@ -82,6 +86,10 @@ export const useUIStore = create<UIState>((set) => ({
   // Editing pulse state
   isEditing: false,
   setIsEditing: (value) => set({ isEditing: value }),
+
+  // Working status for shimmer indicator
+  workingStatus: null,
+  setWorkingStatus: (status) => set({ workingStatus: status }),
 
   // Version restore callback
   restoreVersion: null,

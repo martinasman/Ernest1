@@ -171,6 +171,21 @@
   border-width: 1px;
 }
 
+/* Shimmer text animation for working status */
+@keyframes shimmer-text {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.shimmer-status {
+  background: linear-gradient(90deg, #6b7280 25%, #c8ff00 50%, #6b7280 75%);
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: shimmer-text 2s linear infinite;
+}
+
 /* Minimal, unobtrusive scrollbars for chat surfaces */
 .chat-scroll {
   scrollbar-width: thin;

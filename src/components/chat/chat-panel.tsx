@@ -78,6 +78,8 @@ export function ChatPanel() {
   const clearSelection = useUIStore((state) => state.clearSelection)
   const setIsEditing = useUIStore((state) => state.setIsEditing)
   const setRestoreVersionCallback = useUIStore((state) => state.setRestoreVersionCallback)
+  const workingStatus = useUIStore((state) => state.workingStatus)
+  const setWorkingStatus = useUIStore((state) => state.setWorkingStatus)
 
   // Get generation tasks for inline todo display
   const generationTasks = useGenerationStore((state) => state.tasks)
@@ -203,6 +205,7 @@ export function ChatPanel() {
     setLastUserPrompt(input.trim())
     setInput('')
     setIsLoading(true)
+    setWorkingStatus('Thinking...')
     if (errorSource === 'chat') {
       setError(null)
       setLastErrorDetails(null)
@@ -215,6 +218,7 @@ export function ChatPanel() {
         const os = selectedElement as OverviewSelection
         const editingLabel = getEditingLabel()
         setIsEditing(true)
+        setWorkingStatus(`Analyzing ${editingLabel}...`)
 
         // Call the edit-overview API
         const response = await fetch('/api/ai/edit-overview', {
@@ -265,6 +269,7 @@ export function ChatPanel() {
             ? `src/pages/${selectedElement.pageSlug}.tsx`
             : undefined
 
+        setWorkingStatus('Reading files...')
         const response = await fetch('/api/ai/edit-code', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -286,6 +291,8 @@ export function ChatPanel() {
         if (!response.ok) {
           throw new Error(result.error || 'Failed to edit code')
         }
+
+        setWorkingStatus('Applying changes...')
 
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
@@ -380,6 +387,7 @@ export function ChatPanel() {
     } finally {
       setIsEditing(false)
       setIsLoading(false)
+      setWorkingStatus(null)
     }
   }
 
@@ -534,6 +542,7 @@ export function ChatPanel() {
     if (!workspace?.id || !lastErrorDetails || isLoading) return
 
     setIsLoading(true)
+    setWorkingStatus('Fixing error...')
     setError(null)
     setErrorSource(null)
 
@@ -619,6 +628,7 @@ export function ChatPanel() {
     } finally {
       setIsEditing(false)
       setIsLoading(false)
+      setWorkingStatus(null)
     }
   }
 
@@ -677,10 +687,11 @@ export function ChatPanel() {
               </div>
             )}
 
-            {isLoading && allMessages[allMessages.length - 1]?.role === 'user' && !isGenerating && (
-              <div className="flex items-center gap-2 text-gray-400">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">Thinking...</span>
+            {workingStatus && (
+              <div className="space-y-1">
+                <p className="text-base leading-relaxed break-words whitespace-pre-wrap max-w-full">
+                  <span className="shimmer-status">{workingStatus}</span>
+                </p>
               </div>
             )}
           </div>
