@@ -8,7 +8,7 @@ export interface Message {
   toolCalls?: any[]
   toolResults?: any[]
   status?: 'streaming' | 'complete' | 'error'
-  createdAt: Date
+  createdAt?: Date | string
 }
 
 export interface PendingChange {
@@ -49,6 +49,9 @@ interface ChatState {
 
   setOpen: (open: boolean) => void
   toggle: () => void
+
+  // Replace all messages (used for hydration/persistence)
+  setMessages: (messages: Message[]) => void
 }
 
 export const useChatStore = create<ChatState>()(
@@ -91,5 +94,7 @@ export const useChatStore = create<ChatState>()(
 
     setOpen: (isOpen) => set({ isOpen }),
     toggle: () => set((state) => ({ isOpen: !state.isOpen })),
+
+    setMessages: (messages) => set({ messages }),
   }))
 )

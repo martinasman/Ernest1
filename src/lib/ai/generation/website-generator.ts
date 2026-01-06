@@ -3,6 +3,7 @@ import { openrouter, getModelId, DEFAULT_MODEL } from '@/lib/ai/openrouter'
 import type { BusinessPlan } from './planner'
 import { getWorkspaceIntegrations } from '@/lib/integrations/get-workspace-integrations'
 import { hexToHSL } from './brand-generator'
+import { ERROR_OVERLAY_INJECTION_SCRIPT } from '@/lib/preview/error-overlay-injector'
 
 // Brand type from database
 interface BrandColors {
@@ -1055,6 +1056,9 @@ function generateIndexHtml(brand: Brand | null): string {
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      ${ERROR_OVERLAY_INJECTION_SCRIPT}
+    </script>
   </body>
 </html>
 `

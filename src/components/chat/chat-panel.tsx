@@ -17,6 +17,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   todos?: TodoItem[]
+  createdAt?: string
 }
 
 export function ChatPanel() {
@@ -26,6 +27,9 @@ export function ChatPanel() {
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorSource, setErrorSource] = useState<'chat' | 'preview' | null>(null)
+  const [lastErrorDetails, setLastErrorDetails] = useState<string | null>(null)
+  const [lastUserPrompt, setLastUserPrompt] = useState<string | null>(null)
   const { selectedModel, setModel } = useModelStore()
 
   // Selection state for contextual editing
@@ -91,6 +95,7 @@ export function ChatPanel() {
 
   // Get messages from the chat store (used by business generator)
   const storeMessages = useChatStore((state) => state.messages)
+  const setStoreMessages = useChatStore((state) => state.setMessages)
 
   // Combine store messages and local messages for display
   const allMessages: Message[] = [
@@ -125,13 +130,19 @@ export function ChatPanel() {
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input.trim()
+      content: input.trim(),
+      createdAt: new Date().toISOString(),
     }
 
     setLocalMessages(prev => [...prev, userMessage])
+    setLastUserPrompt(input.trim())
     setInput('')
     setIsLoading(true)
-    setError(null)
+    if (errorSource === 'chat') {
+      setError(null)
+      setLastErrorDetails(null)
+      setErrorSource(null)
+    }
 
     try {
       // Check if we're editing an overview field
@@ -153,15 +164,23 @@ export function ChatPanel() {
         })
 
         if (!response.ok) {
-          const error = await response.json()
-          throw new Error(error.error || 'Failed to update field')
+          let message = 'Failed to update field'
+          try {
+            const errJson = await response.json()
+            message = errJson.error || message
+          } catch {
+            const txt = await response.text()
+            message = txt || message
+          }
+          throw new Error(message)
         }
 
         // Add success message
         const assistantMessage: Message = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: `Updated ${editingLabel}. The changes have been applied.`
+          content: `Updated ${editingLabel}. The changes have been applied.`,
+          createdAt: new Date().toISOString(),
         }
         setLocalMessages(prev => [...prev, assistantMessage])
 
@@ -192,7 +211,13 @@ export function ChatPanel() {
           })
         })
 
-        const result = await response.json()
+        let result: any
+        try {
+          result = await response.json()
+        } catch {
+          const text = await response.text()
+          throw new Error(text || 'Invalid response from edit-code')
+        }
         if (!response.ok) {
           throw new Error(result.error || 'Failed to edit code')
         }
@@ -201,6 +226,7 @@ export function ChatPanel() {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           content: result.summary || 'Updated your site.',
+          createdAt: new Date().toISOString(),
         }
         setLocalMessages(prev => [...prev, assistantMessage])
 
@@ -211,7 +237,7 @@ export function ChatPanel() {
 
       // Regular chat flow
       const requestBody: Record<string, unknown> = {
-        messages: [...localMessages, userMessage].map(m => ({
+        messages: [...storeMessages, ...localMessages, userMessage].map(m => ({
           role: m.role,
           content: m.content
         })),
@@ -226,7 +252,14 @@ export function ChatPanel() {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to get response')
+        let message = 'Failed to get response'
+        try {
+          const txt = await response.text()
+          if (txt) message = txt
+        } catch {
+          // ignore
+        }
+        throw new Error(message)
       }
 
       const reader = response.body?.getReader()
@@ -236,28 +269,44 @@ export function ChatPanel() {
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: ''
+        content: '',
+        createdAt: new Date().toISOString(),
       }
       setLocalMessages(prev => [...prev, assistantMessage])
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
+      if (!reader) {
+        throw new Error('No response stream received')
+      }
 
-          const chunk = decoder.decode(value)
-          assistantContent += chunk
-          setLocalMessages(prev =>
-            prev.map(m =>
-              m.id === assistantMessage.id
-                ? { ...m, content: assistantContent }
-                : m
-            )
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const chunk = decoder.decode(value)
+        assistantContent += chunk
+        setLocalMessages(prev =>
+          prev.map(m =>
+            m.id === assistantMessage.id
+              ? { ...m, content: assistantContent }
+              : m
           )
-        }
+        )
+      }
+
+      if (!assistantContent.trim()) {
+        setLocalMessages(prev =>
+          prev.map(m =>
+            m.id === assistantMessage.id
+              ? { ...m, content: 'I didn’t get a response. Please try again.' }
+              : m
+          )
+        )
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
+      const message = err instanceof Error ? err.message : 'An error occurred'
+      setError(message)
+      setLastErrorDetails(message)
+      setErrorSource('chat')
     } finally {
       setIsEditing(false)
       setIsLoading(false)
@@ -273,6 +322,219 @@ export function ChatPanel() {
 
   const setSuggestion = (text: string) => {
     setInput(text)
+  }
+
+  // Capture preview runtime errors coming from the iframe and surface them in chat
+  useEffect(() => {
+    const handlePreviewError = async (event: MessageEvent) => {
+      const data = event.data as Record<string, unknown> | null
+      if (!data || typeof data !== 'object') return
+      if ((data as any).source !== 'ernest-preview') return
+
+      const messageType = (data as any).type
+
+      const rawMessage = typeof data.message === 'string' ? data.message : 'Preview error'
+      const stack = typeof (data as any).stack === 'string' ? (data as any).stack : ''
+      const url = typeof (data as any).url === 'string' ? (data as any).url : ''
+
+      const details = [rawMessage, stack, url ? `Preview URL: ${url}` : '']
+        .filter(Boolean)
+        .join('\n')
+        .slice(0, 1200)
+
+      setError(`Preview error detected: ${rawMessage.slice(0, 300)}`)
+      setLastErrorDetails(details)
+      setErrorSource('preview')
+
+      // If this is a fix request from the overlay button, auto-trigger fix after a brief delay
+      // so error state is fully set
+      if (messageType === 'error-fix-request') {
+        setTimeout(() => {
+          setInput('')
+          setIsLoading(false)
+          // Will be triggered by the next effect that watches lastErrorDetails
+        }, 100)
+      }
+    }
+
+    window.addEventListener('message', handlePreviewError)
+    return () => window.removeEventListener('message', handlePreviewError)
+  }, [])
+
+  // Hydrate chat from database first, then localStorage as fallback
+  useEffect(() => {
+    if (!workspace?.id) return
+
+    let isCancelled = false
+
+    const loadMessages = async () => {
+      const key = `ernest-chat-${workspace.id}`
+      try {
+        // Load from database first (source of truth)
+        const response = await fetch(`/api/messages?workspaceId=${workspace.id}`)
+        if (!response.ok) throw new Error('Failed to load from database')
+
+        const { messages: dbMessages } = await response.json()
+
+        if (isCancelled) return
+
+        if (dbMessages && dbMessages.length > 0) {
+          // Database has messages - use them
+          const normalized = dbMessages.map((m: any) => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+            createdAt: m.created_at
+          }))
+          setStoreMessages(normalized)
+          setLocalMessages([])
+
+          // Cache to localStorage for faster subsequent loads
+          try {
+            window.localStorage.setItem(key, JSON.stringify(normalized))
+          } catch (err) {
+            console.warn('Failed to cache to localStorage', err)
+          }
+        } else {
+          // No database messages - try localStorage as fallback
+          const raw = typeof window !== 'undefined' ? window.localStorage.getItem(key) : null
+          if (raw) {
+            try {
+              const parsed = JSON.parse(raw) as Array<Message & { createdAt?: string }>
+              const normalized = parsed.map((m) => ({
+                ...m,
+                createdAt: m.createdAt ? new Date(m.createdAt).toISOString() : new Date().toISOString(),
+              }))
+              setStoreMessages(normalized as any)
+              setLocalMessages([])
+            } catch (err) {
+              console.error('Failed to parse localStorage', err)
+              setStoreMessages([])
+              setLocalMessages([])
+              window.localStorage.removeItem(key)
+            }
+          } else {
+            setStoreMessages([])
+            setLocalMessages([])
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load messages:', err)
+        // Fallback to localStorage on database error
+        const raw = typeof window !== 'undefined' ? window.localStorage.getItem(key) : null
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw)
+            setStoreMessages(parsed)
+            setLocalMessages([])
+          } catch {
+            setStoreMessages([])
+            setLocalMessages([])
+          }
+        } else {
+          setStoreMessages([])
+          setLocalMessages([])
+        }
+      }
+    }
+
+    loadMessages()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [workspace?.id, setStoreMessages])
+
+  // Persist chat history per workspace
+  useEffect(() => {
+    if (!workspace?.id) return
+    const key = `ernest-chat-${workspace.id}`
+    try {
+      const payload = allMessages.map((m) => ({
+        ...m,
+        createdAt: m.createdAt || new Date().toISOString(),
+      }))
+      window.localStorage.setItem(key, JSON.stringify(payload))
+    } catch (err) {
+      console.error('Failed to save chat history', err)
+    }
+  }, [allMessages, workspace?.id])
+
+  const handleFixError = async () => {
+    if (!workspace?.id || !lastErrorDetails || isLoading) return
+    setIsLoading(true)
+    setError(null)
+    setErrorSource(null)
+
+    const contextNote = errorSource === 'preview'
+      ? 'The live preview reported a runtime error while loading the generated code.'
+      : 'The last request failed.'
+    const recoveryMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: `${contextNote}\n\nError details:\n${lastErrorDetails || 'No details provided.'}\n\nOriginal prompt: "${lastUserPrompt || ''}"`,
+      createdAt: new Date().toISOString(),
+    }
+
+    const outboundMessages = [
+      ...storeMessages.map((m) => ({ role: m.role, content: m.content })),
+      ...localMessages.map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user', content: recoveryMessage.content },
+    ]
+
+    try {
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: outboundMessages,
+          workspaceId: workspace.id,
+          model: selectedModel,
+        }),
+      })
+
+      if (!response.ok) {
+        const txt = await response.text()
+        throw new Error(txt || 'Failed to get recovery response')
+      }
+
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      let assistantContent = ''
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+        createdAt: new Date().toISOString(),
+      }
+      setLocalMessages(prev => [...prev, recoveryMessage, assistantMessage])
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value)
+          assistantContent += chunk
+          setLocalMessages(prev =>
+            prev.map(m =>
+              m.id === assistantMessage.id
+                ? { ...m, content: assistantContent }
+                : m
+            )
+          )
+        }
+      }
+      setLastErrorDetails(null)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An error occurred'
+      setError(message)
+      setLastErrorDetails(message)
+      setErrorSource('chat')
+    } finally {
+      setIsEditing(false)
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -339,11 +601,26 @@ export function ChatPanel() {
           </div>
         )}
 
-        {error && (
-          <div className="p-3 rounded-lg bg-red-900/20 border border-red-900/30 text-red-400 text-sm mt-4">
-            {error}
+      {error && (
+        <div className="p-3 rounded-lg bg-red-900/20 border border-red-900/30 text-red-400 text-sm mt-4 space-y-2">
+          <div>{error}</div>
+          {lastErrorDetails && (
+            <pre className="text-xs text-red-200 whitespace-pre-wrap bg-red-950/30 border border-red-900/40 rounded px-3 py-2">
+              {lastErrorDetails}
+            </pre>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleFixError}
+              disabled={!lastErrorDetails || isLoading || !workspace?.id}
+              className="px-3 py-1.5 text-xs rounded-md bg-red-500/20 border border-red-500/40 text-red-100 hover:bg-red-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              Try to fix error
+            </button>
           </div>
-        )}
+        </div>
+      )}
       </div>
 
       {/* Input Area */}
