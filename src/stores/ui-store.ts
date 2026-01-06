@@ -19,6 +19,9 @@ export interface OverviewSelection {
 
 export type SelectedElement = WebsiteSelection | OverviewSelection | null
 
+// Version restore callback type
+export type RestoreVersionCallback = (files: Record<string, string>, timestamp: string) => void
+
 interface UIState {
   // Active section tab
   activeSection: SectionTab
@@ -45,6 +48,10 @@ interface UIState {
   // Editing state for live feedback
   isEditing: boolean
   setIsEditing: (value: boolean) => void
+
+  // Version restore (set by chat panel, called by header)
+  restoreVersion: RestoreVersionCallback | null
+  setRestoreVersionCallback: (callback: RestoreVersionCallback | null) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -75,4 +82,8 @@ export const useUIStore = create<UIState>((set) => ({
   // Editing pulse state
   isEditing: false,
   setIsEditing: (value) => set({ isEditing: value }),
+
+  // Version restore callback
+  restoreVersion: null,
+  setRestoreVersionCallback: (callback) => set({ restoreVersion: callback }),
 }))

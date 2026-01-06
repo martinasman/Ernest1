@@ -138,6 +138,17 @@ CREATE TABLE website_pages (
   UNIQUE(website_id, slug)
 );
 
+-- Version history for website snapshots
+CREATE TABLE website_versions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  files JSONB NOT NULL,
+  label TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_website_versions_workspace ON website_versions(workspace_id, created_at DESC);
+
 CREATE TABLE flows (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -455,6 +466,7 @@ ALTER TABLE brands ENABLE ROW LEVEL SECURITY;
 ALTER TABLE overviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE websites ENABLE ROW LEVEL SECURITY;
 ALTER TABLE website_pages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE website_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE internal_tools ENABLE ROW LEVEL SECURITY;
 ALTER TABLE internal_tool_records ENABLE ROW LEVEL SECURITY;
@@ -516,6 +528,10 @@ CREATE POLICY "Workspace members can access websites"
 
 CREATE POLICY "Workspace members can access website_pages"
   ON website_pages FOR ALL
+  USING (user_has_workspace_access(workspace_id));
+
+CREATE POLICY "Workspace members can access website_versions"
+  ON website_versions FOR ALL
   USING (user_has_workspace_access(workspace_id));
 
 CREATE POLICY "Workspace members can access flows"

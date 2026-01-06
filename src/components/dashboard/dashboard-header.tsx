@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useWorkspace } from '@/hooks/use-workspace'
@@ -26,6 +27,8 @@ import {
   Play,
   Settings,
   Plus,
+  Clock,
+  RotateCcw,
 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -35,6 +38,27 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+
+interface Version {
+  id: string
+  label: string | null
+  created_at: string
+}
+
+function formatTimeAgo(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMs / 3600000)
+  const diffDays = Math.floor(diffMs / 86400000)
+
+  if (diffMins < 1) return 'Just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
+}
 
 export function DashboardHeader() {
   const params = useParams()
@@ -48,6 +72,74 @@ export function DashboardHeader() {
   const viewMode = useUIStore((state) => state.viewMode)
   const setViewMode = useUIStore((state) => state.setViewMode)
   const websitePages = useUIStore((state) => state.websitePages)
+  const restoreVersion = useUIStore((state) => state.restoreVersion)
+
+  // Version history state
+  const [versions, setVersions] = useState<Version[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [isPublishing, setIsPublishing] = useState(false)
+
+  // Fetch versions when workspace changes
+  const fetchVersions = useCallback(async () => {
+    if (!workspace?.id) return
+    setVersionsLoading(true)
+    try {
+      const res = await fetch(`/api/versions?workspaceId=${workspace.id}`)
+      const data = await res.json()
+      setVersions(data.versions || [])
+    } catch (error) {
+      console.error('Failed to fetch versions:', error)
+    } finally {
+      setVersionsLoading(false)
+    }
+  }, [workspace?.id])
+
+  useEffect(() => {
+    fetchVersions()
+  }, [fetchVersions])
+
+  // Handle restoring a version
+  const handleRestoreVersion = async (versionId: string) => {
+    try {
+      const res = await fetch(`/api/versions/${versionId}`)
+      const data = await res.json()
+      if (data.version?.files) {
+        // Restore files via UI store (this will update preview and add chat message)
+        restoreVersion?.(data.version.files, formatTimeAgo(data.version.created_at))
+      }
+    } catch (error) {
+      console.error('Failed to restore version:', error)
+    }
+  }
+
+  // Handle publish - saves version first
+  const handlePublish = async () => {
+    if (!workspace?.id) return
+    setIsPublishing(true)
+    try {
+      // Get current files from workspace ai_context
+      const aiContext = workspace.ai_context as Record<string, unknown> | null
+      const files = aiContext?.websiteFiles as Record<string, string> | undefined
+      if (files && Object.keys(files).length > 0) {
+        // Save version before publishing
+        await fetch('/api/versions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceId: workspace.id,
+            files,
+          }),
+        })
+        // Refresh versions list
+        fetchVersions()
+      }
+      // TODO: Actual publish logic here
+    } catch (error) {
+      console.error('Failed to publish:', error)
+    } finally {
+      setIsPublishing(false)
+    }
+  }
 
   // Cycle through view modes
   const cycleViewMode = () => {
@@ -83,9 +175,44 @@ export function DashboardHeader() {
 
         {/* History and Layout Icons - at right edge of chat section */}
         <div className="flex items-center gap-1 ml-auto">
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500">
-            <History className="w-4 h-4" />
-          </Button>
+          {/* Version History Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500">
+                <History className="w-4 h-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuLabel className="flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                Version History
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {versionsLoading ? (
+                <div className="px-2 py-3 text-sm text-gray-500 text-center">Loading...</div>
+              ) : versions.length === 0 ? (
+                <div className="px-2 py-3 text-sm text-gray-500 text-center">
+                  No versions yet. Publish to create your first version.
+                </div>
+              ) : (
+                versions.slice(0, 10).map((version, index) => (
+                  <DropdownMenuItem
+                    key={version.id}
+                    onClick={() => handleRestoreVersion(version.id)}
+                    className="flex items-center justify-between cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <RotateCcw className="w-3.5 h-3.5 text-gray-400" />
+                      {version.label || `Version ${versions.length - index}`}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {formatTimeAgo(version.created_at)}
+                    </span>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-500">
             <LayoutGrid className="w-4 h-4" />
           </Button>
@@ -309,8 +436,13 @@ export function DashboardHeader() {
                 <button className="text-slate-200 hover:text-white font-medium">
                   Review security
                 </button>
-                <Button size="sm" className="bg-[#c8ff00] hover:bg-[#b8ef00] text-gray-900 px-4">
-                  Publish
+                <Button
+                  size="sm"
+                  className="bg-[#c8ff00] hover:bg-[#b8ef00] text-gray-900 px-4 disabled:opacity-50"
+                  onClick={handlePublish}
+                  disabled={isPublishing}
+                >
+                  {isPublishing ? 'Publishing...' : 'Publish'}
                 </Button>
               </div>
             </div>

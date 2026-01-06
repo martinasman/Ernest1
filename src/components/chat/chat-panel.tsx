@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useChatStore } from '@/stores/chat-store'
 import { useModelStore } from '@/stores/model-store'
-import { useUIStore, type WebsiteSelection, type OverviewSelection } from '@/stores/ui-store'
+import { useUIStore, type WebsiteSelection, type OverviewSelection, type RestoreVersionCallback } from '@/stores/ui-store'
 import { useGenerationStore, getTaskDisplayName, GENERATION_STEPS } from '@/stores/generation-store'
 import { ModelPicker } from '@/components/ui/model-picker'
 import { InlineTodoList, type TodoItem } from './inline-todo-list'
@@ -77,6 +77,7 @@ export function ChatPanel() {
   const selectedElement = useUIStore((state) => state.selectedElement)
   const clearSelection = useUIStore((state) => state.clearSelection)
   const setIsEditing = useUIStore((state) => state.setIsEditing)
+  const setRestoreVersionCallback = useUIStore((state) => state.setRestoreVersionCallback)
 
   // Get generation tasks for inline todo display
   const generationTasks = useGenerationStore((state) => state.tasks)
@@ -145,6 +146,47 @@ export function ChatPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [allMessages, currentTodos])
+
+  // Register version restore callback
+  useEffect(() => {
+    const handleRestoreVersion: RestoreVersionCallback = async (files, timestamp) => {
+      if (!workspace?.id) return
+
+      try {
+        // Call restore API
+        const res = await fetch('/api/versions/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            workspaceId: workspace.id,
+            files,
+          }),
+        })
+
+        if (res.ok) {
+          // Add confirmation message to chat
+          const restoreMessage: Message = {
+            id: Date.now().toString(),
+            role: 'assistant',
+            content: `I've restored your website to the version from ${timestamp}. The preview has been updated with the previous files.`,
+            createdAt: new Date().toISOString(),
+          }
+          setLocalMessages(prev => [...prev, restoreMessage])
+
+          // Refresh workspace data
+          refetch()
+        }
+      } catch (error) {
+        console.error('Failed to restore version:', error)
+      }
+    }
+
+    setRestoreVersionCallback(handleRestoreVersion)
+
+    return () => {
+      setRestoreVersionCallback(null)
+    }
+  }, [workspace?.id, refetch, setRestoreVersionCallback])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
