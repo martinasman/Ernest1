@@ -61,6 +61,22 @@ function parseStreamContent(rawContent: string): string {
   return rawContent
 }
 
+// Timeout for stream reading to prevent infinite hangs
+const STREAM_TIMEOUT = 60000 // 60 seconds
+
+// Read from stream with timeout protection
+async function readStreamWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  timeoutMs: number
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  return Promise.race([
+    reader.read(),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Response timeout - please try again')), timeoutMs)
+    ),
+  ])
+}
+
 export function ChatPanel() {
   const { workspace, refetch } = useWorkspace()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -353,7 +369,7 @@ export function ChatPanel() {
       let rawContent = ''
 
       while (true) {
-        const { done, value } = await reader.read()
+        const { done, value } = await readStreamWithTimeout(reader, STREAM_TIMEOUT)
         if (done) break
 
         const chunk = decoder.decode(value)
@@ -599,7 +615,7 @@ export function ChatPanel() {
       let rawContent = ''
 
       while (true) {
-        const { done, value } = await reader.read()
+        const { done, value } = await readStreamWithTimeout(reader, STREAM_TIMEOUT)
         if (done) break
         const chunk = decoder.decode(value)
         rawContent += chunk
