@@ -284,11 +284,11 @@ export function DashboardHeader() {
                 </div>
                 <div className="flex items-center gap-2">
                   <input
-                    className="w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#c8ff00]"
                     placeholder="published-url.astridite.com"
                   />
                 </div>
-                <button className="mt-2 text-xs text-blue-300 hover:text-blue-200 font-medium">
+                <button className="mt-2 text-xs text-[#c8ff00] hover:text-[#b8ef00] font-medium">
                   Add custom domain
                 </button>
               </div>
@@ -309,7 +309,7 @@ export function DashboardHeader() {
                 <button className="text-slate-200 hover:text-white font-medium">
                   Review security
                 </button>
-                <Button size="sm" className="bg-blue-500 hover:bg-blue-600 text-white px-4">
+                <Button size="sm" className="bg-[#c8ff00] hover:bg-[#b8ef00] text-gray-900 px-4">
                   Publish
                 </Button>
               </div>

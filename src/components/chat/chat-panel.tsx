@@ -20,6 +20,47 @@ interface Message {
   createdAt?: string
 }
 
+// Parse streaming response content - handles NDJSON, JSON array, or plain text
+function parseStreamContent(rawContent: string): string {
+  // Try to parse as JSON array first (non-streaming response format)
+  try {
+    const arr = JSON.parse(rawContent)
+    if (Array.isArray(arr)) {
+      return arr
+        .filter((p: any) => (p.type === 'text' || p.type === 'text-delta') && p.text)
+        .map((p: any) => p.text)
+        .join('')
+    }
+  } catch {
+    // Not a complete JSON array - try NDJSON
+  }
+
+  // Try to parse as NDJSON (newline-delimited JSON)
+  const lines = rawContent.split('\n').filter(Boolean)
+  let extracted = ''
+  let foundJson = false
+
+  for (const line of lines) {
+    try {
+      const part = JSON.parse(line)
+      foundJson = true
+      if ((part.type === 'text-delta' || part.type === 'text') && part.text) {
+        extracted += part.text
+      }
+    } catch {
+      // Not valid JSON - continue to next line
+    }
+  }
+
+  // If we found and parsed JSON, use extracted content
+  if (foundJson && extracted) {
+    return extracted
+  }
+
+  // Fall back to raw content (plain text response)
+  return rawContent
+}
+
 export function ChatPanel() {
   const { workspace, refetch } = useWorkspace()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -45,34 +86,16 @@ export function ChatPanel() {
   const canEditCode = !!(generatedFiles && Object.keys(generatedFiles).length > 0)
 
   const isEditIntent = (text: string) => {
-    const lower = text.toLowerCase()
-    const keywords = [
-      'color',
-      'button',
-      'style',
-      'font',
-      'layout',
-      'section',
-      'page',
-      'nav',
-      'menu',
-      'footer',
-      'hero',
-      'cta',
-      'background',
-      'heading',
-      'copy',
-      'text',
-      'animation',
-      'form',
-      'add ',
-      'create ',
-      'edit ',
-      'remove ',
-      'change ',
-      'update ',
+    const lower = text.toLowerCase().trim()
+    // Must start with an action verb to trigger code editing
+    // This prevents casual mentions of "color", "text" etc from triggering edits
+    const actionPrefixes = [
+      'make ', 'change ', 'update ', 'add ', 'remove ', 'edit ', 'fix ',
+      'set ', 'replace ', 'delete ', 'modify ', 'adjust ', 'increase ', 'decrease ',
     ]
-    return keywords.some((k) => lower.includes(k)) || !!selectedElement
+    const hasActionPrefix = actionPrefixes.some(p => lower.startsWith(p))
+    // Also trigger if user has explicitly selected an element
+    return hasActionPrefix || !!selectedElement
   }
 
   // Get display name for selected element
@@ -278,12 +301,17 @@ export function ChatPanel() {
         throw new Error('No response stream received')
       }
 
+      let rawContent = ''
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
         const chunk = decoder.decode(value)
-        assistantContent += chunk
+        rawContent += chunk
+
+        // Parse streaming response - handle NDJSON, JSON array, or plain text
+        assistantContent = parseStreamContent(rawContent)
         setLocalMessages(prev =>
           prev.map(m =>
             m.id === assistantMessage.id
@@ -297,7 +325,7 @@ export function ChatPanel() {
         setLocalMessages(prev =>
           prev.map(m =>
             m.id === assistantMessage.id
-              ? { ...m, content: 'I didn’t get a response. Please try again.' }
+              ? { ...m, content: 'I didn\'t get a response. Please try again.' }
               : m
           )
         )
@@ -517,11 +545,14 @@ export function ChatPanel() {
       const decoder = new TextDecoder()
       let assistantContent = ''
 
+      let rawContent = ''
+
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         const chunk = decoder.decode(value)
-        assistantContent += chunk
+        rawContent += chunk
+        assistantContent = parseStreamContent(rawContent)
         setLocalMessages(prev =>
           prev.map(m =>
             m.id === assistantMessage.id
