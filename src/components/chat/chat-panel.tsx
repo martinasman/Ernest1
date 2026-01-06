@@ -139,6 +139,14 @@ export function ChatPanel() {
   const storeMessages = useChatStore((state) => state.messages)
   const setStoreMessages = useChatStore((state) => state.setMessages)
 
+  // Plan Mode state
+  const isPlanMode = useChatStore((state) => state.isPlanMode)
+  const setPlanMode = useChatStore((state) => state.setPlanMode)
+  const currentPlanMessageId = useChatStore((state) => state.currentPlanMessageId)
+  const currentPlanContent = useChatStore((state) => state.currentPlanContent)
+  const setCurrentPlan = useChatStore((state) => state.setCurrentPlan)
+  const clearPlanMode = useChatStore((state) => state.clearPlanMode)
+
   // Combine store messages and local messages for display
   const allMessages: Message[] = [
     ...storeMessages.map((m) => ({
@@ -226,6 +234,12 @@ export function ChatPanel() {
       setError(null)
       setLastErrorDetails(null)
       setErrorSource(null)
+    }
+
+    // If in plan mode and there's an existing plan, clear it so the new response becomes the plan
+    // This enables plan refinement through follow-up messages
+    if (isPlanMode && currentPlanContent) {
+      setCurrentPlan(null, null)
     }
 
     try {
@@ -330,7 +344,8 @@ export function ChatPanel() {
           content: m.content
         })),
         workspaceId: workspace.id,
-        model: selectedModel
+        model: selectedModel,
+        isPlanMode: isPlanMode
       }
 
       const response = await fetch('/api/ai/chat', {
@@ -395,6 +410,11 @@ export function ChatPanel() {
           )
         )
       }
+
+      // Track plan content when in plan mode
+      if (isPlanMode && assistantContent.trim()) {
+        setCurrentPlan(assistantMessage.id, assistantContent)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An error occurred'
       setError(message)
@@ -416,6 +436,98 @@ export function ChatPanel() {
 
   const setSuggestion = (text: string) => {
     setInput(text)
+  }
+
+  // Handle executing an approved plan
+  const handleExecutePlan = async () => {
+    const planContent = useChatStore.getState().currentPlanContent
+    if (!planContent || !workspace?.id) return
+
+    // Exit plan mode
+    clearPlanMode()
+
+    // Create execution prompt that references the plan
+    const executionPrompt = `Execute the following plan that was created:
+
+${planContent}
+
+Please proceed with implementing this plan step by step. Execute all the actions described.`
+
+    // Create user message showing intent
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: 'Go ahead with the plan',
+      createdAt: new Date().toISOString(),
+    }
+
+    setLocalMessages(prev => [...prev, userMessage])
+    setIsLoading(true)
+    setWorkingStatus('Executing plan...')
+
+    try {
+      // Call API without plan mode - let AI execute normally
+      const response = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [
+            ...storeMessages.map(m => ({ role: m.role, content: m.content })),
+            ...localMessages.map(m => ({ role: m.role, content: m.content })),
+            { role: 'user', content: executionPrompt }
+          ],
+          workspaceId: workspace.id,
+          model: selectedModel,
+          isPlanMode: false, // Execute mode, not plan mode
+        })
+      })
+
+      if (!response.ok) {
+        const txt = await response.text()
+        throw new Error(txt || 'Failed to execute plan')
+      }
+
+      const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No response stream received')
+      }
+
+      const decoder = new TextDecoder()
+      let assistantContent = ''
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+        createdAt: new Date().toISOString(),
+      }
+      setLocalMessages(prev => [...prev, assistantMessage])
+
+      let rawContent = ''
+
+      while (true) {
+        const { done, value } = await readStreamWithTimeout(reader, STREAM_TIMEOUT)
+        if (done) break
+        const chunk = decoder.decode(value)
+        rawContent += chunk
+        assistantContent = parseStreamContent(rawContent)
+        setLocalMessages(prev =>
+          prev.map(m =>
+            m.id === assistantMessage.id
+              ? { ...m, content: assistantContent }
+              : m
+          )
+        )
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'An error occurred'
+      setError(message)
+      setLastErrorDetails(message)
+      setErrorSource('chat')
+    } finally {
+      setIsLoading(false)
+      setWorkingStatus(null)
+    }
   }
 
   // Capture preview runtime errors coming from the iframe and surface them in chat
@@ -691,6 +803,26 @@ export function ChatPanel() {
                     {message.todos && message.todos.length > 0 && (
                       <InlineTodoList items={message.todos} />
                     )}
+                    {/* Go with Plan Button - only show on current plan message */}
+                    {isPlanMode && message.id === currentPlanMessageId && !isLoading && (
+                      <div className="flex items-center gap-2 mt-3">
+                        <button
+                          type="button"
+                          onClick={handleExecutePlan}
+                          className="px-4 py-2 rounded-lg bg-[#c8ff00] text-gray-900 text-sm font-medium hover:bg-[#b8ef00] transition-colors flex items-center gap-2"
+                        >
+                          <ArrowUpRight className="w-4 h-4" />
+                          Go with plan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => clearPlanMode()}
+                          className="px-4 py-2 rounded-lg bg-[#3a3a3a] text-gray-300 text-sm hover:bg-[#444] transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -755,6 +887,24 @@ export function ChatPanel() {
             </div>
           </div>
         )}
+        {/* Plan Mode Badge */}
+        {isPlanMode && (
+          <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/20 border border-amber-500/30 rounded-full">
+              <Lightbulb className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <span className="text-xs text-amber-400 font-medium">
+                Plan Mode: AI will create a plan first
+              </span>
+              <button
+                type="button"
+                onClick={() => clearPlanMode()}
+                className="ml-1 p-0.5 hover:bg-amber-500/20 rounded-full transition-colors"
+              >
+                <X className="w-3 h-3 text-amber-400" />
+              </button>
+            </div>
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="relative">
           <div className="bg-[#2a2a2a] rounded-lg px-4 py-4">
             <textarea
@@ -788,9 +938,15 @@ export function ChatPanel() {
                 </button>
                 <button
                   type="button"
-                  className="px-2.5 py-1.5 rounded-lg hover:bg-[#3a3a3a] text-gray-400 text-xs transition-colors flex items-center gap-1.5"
+                  onClick={() => setPlanMode(!isPlanMode)}
+                  className={cn(
+                    "px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5",
+                    isPlanMode
+                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                      : "hover:bg-[#3a3a3a] text-gray-400"
+                  )}
                 >
-                  <Lightbulb className="w-3.5 h-3.5" />
+                  <Lightbulb className={cn("w-3.5 h-3.5", isPlanMode && "fill-amber-400")} />
                   Plan
                 </button>
               </div>
