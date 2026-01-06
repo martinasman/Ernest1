@@ -462,6 +462,7 @@ export function ChatPanel() {
 
   const handleFixError = async () => {
     if (!workspace?.id || !lastErrorDetails || isLoading) return
+
     setIsLoading(true)
     setError(null)
     setErrorSource(null)
@@ -469,10 +470,17 @@ export function ChatPanel() {
     const contextNote = errorSource === 'preview'
       ? 'The live preview reported a runtime error while loading the generated code.'
       : 'The last request failed.'
+
     const recoveryMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: `${contextNote}\n\nError details:\n${lastErrorDetails || 'No details provided.'}\n\nOriginal prompt: "${lastUserPrompt || ''}"`,
+      createdAt: new Date().toISOString(),
+    }
+    const assistantMessage: Message = {
+      id: (Date.now() + 1).toString(),
+      role: 'assistant',
+      content: 'Working on a fix...',
       createdAt: new Date().toISOString(),
     }
 
@@ -481,6 +489,9 @@ export function ChatPanel() {
       ...localMessages.map((m) => ({ role: m.role, content: m.content })),
       { role: 'user', content: recoveryMessage.content },
     ]
+
+    // Show the recovery attempt immediately
+    setLocalMessages(prev => [...prev, recoveryMessage, assistantMessage])
 
     try {
       const response = await fetch('/api/ai/chat', {
@@ -499,31 +510,25 @@ export function ChatPanel() {
       }
 
       const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('No response stream received')
+      }
+
       const decoder = new TextDecoder()
       let assistantContent = ''
 
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: '',
-        createdAt: new Date().toISOString(),
-      }
-      setLocalMessages(prev => [...prev, recoveryMessage, assistantMessage])
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const chunk = decoder.decode(value)
-          assistantContent += chunk
-          setLocalMessages(prev =>
-            prev.map(m =>
-              m.id === assistantMessage.id
-                ? { ...m, content: assistantContent }
-                : m
-            )
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value)
+        assistantContent += chunk
+        setLocalMessages(prev =>
+          prev.map(m =>
+            m.id === assistantMessage.id
+              ? { ...m, content: assistantContent }
+              : m
           )
-        }
+        )
       }
       setLastErrorDetails(null)
     } catch (err) {
@@ -531,6 +536,13 @@ export function ChatPanel() {
       setError(message)
       setLastErrorDetails(message)
       setErrorSource('chat')
+      setLocalMessages(prev =>
+        prev.map(m =>
+          m.id === assistantMessage.id
+            ? { ...m, content: `Fix attempt failed: ${message}` }
+            : m
+        )
+      )
     } finally {
       setIsEditing(false)
       setIsLoading(false)
@@ -540,7 +552,7 @@ export function ChatPanel() {
   return (
     <div className="flex flex-col h-full bg-[#1c1c1c]">
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4" ref={scrollRef}>
+      <div className="flex-1 overflow-y-auto p-4 chat-scroll" ref={scrollRef}>
         {allMessages.length === 0 && !isGenerating ? (
           <div className="flex flex-col items-center justify-center h-full text-center p-4">
             <div className="w-12 h-12 rounded-full bg-[#2a2a2a] flex items-center justify-center mb-4">
@@ -569,12 +581,12 @@ export function ChatPanel() {
                 {message.role === 'user' ? (
                   <div className="flex justify-end">
                     <div className="bg-[#2a2a2a] rounded-xl px-5 py-3 max-w-[85%]">
-                      <p className="text-sm text-gray-200 font-serif">{message.content}</p>
+                      <p className="text-sm text-gray-200 font-serif break-words whitespace-pre-wrap">{message.content}</p>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <p className="text-base text-gray-300 leading-relaxed">
+                    <p className="text-base text-gray-300 leading-relaxed break-words whitespace-pre-wrap max-w-full">
                       <MessageContent content={message.content} />
                     </p>
                     {message.todos && message.todos.length > 0 && (
@@ -605,7 +617,7 @@ export function ChatPanel() {
         <div className="p-3 rounded-lg bg-red-900/20 border border-red-900/30 text-red-400 text-sm mt-4 space-y-2">
           <div>{error}</div>
           {lastErrorDetails && (
-            <pre className="text-xs text-red-200 whitespace-pre-wrap bg-red-950/30 border border-red-900/40 rounded px-3 py-2">
+            <pre className="text-xs text-red-200 whitespace-pre-wrap break-words bg-red-950/30 border border-red-900/40 rounded px-3 py-2">
               {lastErrorDetails}
             </pre>
           )}
