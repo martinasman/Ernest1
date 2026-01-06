@@ -32,7 +32,7 @@ function parseStreamContent(rawContent: string): string {
         .join('')
     }
   } catch {
-    // Not a complete JSON array - try NDJSON
+    // Not a complete JSON array - try NDJSON or fallback parsing
   }
 
   // Try to parse as NDJSON (newline-delimited JSON)
@@ -57,8 +57,39 @@ function parseStreamContent(rawContent: string): string {
     return extracted
   }
 
-  // Fall back to raw content (plain text response)
-  return rawContent
+  // Fallback: if content looks like JSON array, try to extract text blocks from it
+  if (rawContent.trim().startsWith('[') && rawContent.trim().endsWith(']')) {
+    try {
+      // Try to extract text content from malformed JSON array
+      const textMatches = rawContent.match(/"text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)
+      if (textMatches && textMatches.length > 0) {
+        const textValues = textMatches.map(match => {
+          const jsonMatch = match.match(/"text"\s*:\s*"(.*)"$/)
+          if (jsonMatch) {
+            // Unescape JSON string
+            return jsonMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+          }
+          return ''
+        }).filter(t => t.length > 0)
+
+        // Filter out empty text blocks (from reasoning) and join the rest
+        const meaningfulText = textValues.filter(t => t.trim().length > 0)
+        if (meaningfulText.length > 0) {
+          return meaningfulText.join('')
+        }
+      }
+    } catch {
+      // If extraction fails, fall through to raw content return
+    }
+  }
+
+  // Fall back to raw content only if it's not JSON
+  if (!rawContent.trim().startsWith('{') && !rawContent.trim().startsWith('[')) {
+    return rawContent
+  }
+
+  // If content is unparseable JSON, return empty string to avoid showing raw JSON to user
+  return ''
 }
 
 // Timeout for stream reading to prevent infinite hangs
