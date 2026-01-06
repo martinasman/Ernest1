@@ -49,6 +49,11 @@ interface UIState {
   isEditing: boolean
   setIsEditing: (value: boolean) => void
 
+  // Select mode for visual element selection
+  isSelectMode: boolean
+  setSelectMode: (mode: boolean) => void
+  toggleSelectMode: () => void
+
   // Working status for shimmer indicator
   workingStatus: string | null
   setWorkingStatus: (status: string | null) => void
@@ -86,6 +91,11 @@ export const useUIStore = create<UIState>((set) => ({
   // Editing pulse state
   isEditing: false,
   setIsEditing: (value) => set({ isEditing: value }),
+
+  // Select mode for visual element selection
+  isSelectMode: false,
+  setSelectMode: (mode) => set({ isSelectMode: mode }),
+  toggleSelectMode: () => set((state) => ({ isSelectMode: !state.isSelectMode })),
 
   // Working status for shimmer indicator
   workingStatus: null,

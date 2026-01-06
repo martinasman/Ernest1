@@ -128,6 +128,10 @@ export function ChatPanel() {
   const workingStatus = useUIStore((state) => state.workingStatus)
   const setWorkingStatus = useUIStore((state) => state.setWorkingStatus)
 
+  // Select mode state
+  const isSelectMode = useUIStore((state) => state.isSelectMode)
+  const toggleSelectMode = useUIStore((state) => state.toggleSelectMode)
+
   // Get generation tasks for inline todo display
   const generationTasks = useGenerationStore((state) => state.tasks)
   const isGenerating = useGenerationStore((state) => state.isGenerating)
@@ -918,24 +922,6 @@ Please proceed with implementing this plan step by step. Execute all the actions
             </div>
           </div>
         )}
-        {/* Plan Mode Badge */}
-        {isPlanMode && (
-          <div className="flex items-center gap-2 mb-2">
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/20 border border-amber-500/30 rounded-full">
-              <Lightbulb className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span className="text-xs text-amber-400 font-medium">
-                Plan Mode: AI will create a plan first
-              </span>
-              <button
-                type="button"
-                onClick={() => clearPlanMode()}
-                className="ml-1 p-0.5 hover:bg-amber-500/20 rounded-full transition-colors"
-              >
-                <X className="w-3 h-3 text-amber-400" />
-              </button>
-            </div>
-          </div>
-        )}
         <form onSubmit={handleSubmit} className="relative">
           <div className="bg-[#2a2a2a] rounded-lg px-4 py-4">
             <textarea
@@ -962,9 +948,15 @@ Please proceed with implementing this plan step by step. Execute all the actions
                 />
                 <button
                   type="button"
-                  className="px-2.5 py-1.5 rounded-lg hover:bg-[#3a3a3a] text-gray-400 text-xs transition-colors flex items-center gap-1.5"
+                  onClick={toggleSelectMode}
+                  className={cn(
+                    "px-2.5 py-1.5 rounded-lg text-xs transition-colors flex items-center gap-1.5",
+                    isSelectMode
+                      ? "bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                      : "hover:bg-[#3a3a3a] text-gray-400"
+                  )}
                 >
-                  <MousePointer2 className="w-3.5 h-3.5" />
+                  <MousePointer2 className={cn("w-3.5 h-3.5", isSelectMode && "animate-pulse")} />
                   Select
                 </button>
                 <button

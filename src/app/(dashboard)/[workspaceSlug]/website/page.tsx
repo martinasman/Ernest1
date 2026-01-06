@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef, useMemo } from 'react'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useGenerationStore, getTaskDisplayName, GENERATION_STEPS } from '@/stores/generation-store'
+import { useUIStore } from '@/stores/ui-store'
+import { SelectionOverlay } from '@/components/preview/selection-overlay'
 import { Loader2, Globe, ExternalLink, RefreshCw, ChevronUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,6 +20,10 @@ export default function WebsitePage() {
   const isGenerating = useGenerationStore((state) => state.isGenerating)
   const tasks = useGenerationStore((state) => state.tasks)
   const currentStep = useGenerationStore((state) => state.currentStep)
+
+  // Select mode state
+  const isSelectMode = useUIStore((state) => state.isSelectMode)
+  const selectedPage = useUIStore((state) => state.selectedPage)
 
   // Preview state
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -258,13 +264,19 @@ export default function WebsitePage() {
   return (
     <div className="relative h-full">
       {/* Preview content - full screen */}
-      <div className="h-full bg-gray-100">
+      <div className="h-full bg-gray-100 relative">
         {previewUrl ? (
-          <iframe
-            src={previewUrl}
-            className="w-full h-full border-0"
-            title="Website Preview"
-          />
+          <>
+            <iframe
+              src={previewUrl}
+              className="w-full h-full border-0"
+              title="Website Preview"
+            />
+            {/* Selection overlay when in select mode */}
+            {isSelectMode && (
+              <SelectionOverlay pageSlug={selectedPage || 'home'} />
+            )}
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center h-full">
             {previewError ? (
