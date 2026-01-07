@@ -5,6 +5,34 @@ import { assembleContext } from '@/lib/ai/context-assembler'
 
 export const maxDuration = 60
 
+// Normalize message content to plain string (handles arrays and raw JSON)
+function normalizeMessageContent(content: any): string {
+  if (typeof content === 'string') {
+    // Handle raw JSON strings that look like arrays
+    if (content.trim().startsWith('[') && content.includes('"type":"text"')) {
+      try {
+        const arr = JSON.parse(content)
+        if (Array.isArray(arr)) {
+          return arr
+            .filter((p: any) => p.type === 'text' && p.text)
+            .map((p: any) => p.text)
+            .join('')
+        }
+      } catch {
+        // Not valid JSON, return as-is
+      }
+    }
+    return content
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p.type === 'text' && p.text)
+      .map((p: any) => p.text)
+      .join('')
+  }
+  return String(content || '')
+}
+
 export async function POST(req: Request) {
   const { messages, workspaceId, model, isPlanMode } = await req.json()
 
@@ -51,11 +79,17 @@ You are in PLAN MODE. Your response MUST follow these rules:
 Remember: In plan mode, you are ONLY planning, not executing. The user will click "Go with plan" to execute after reviewing.`
   }
 
+  // Normalize all message content to plain strings before sending to API
+  const normalizedMessages = messages.map((m: any) => ({
+    role: m.role,
+    content: normalizeMessageContent(m.content)
+  }))
+
   // Stream the response
   const result = streamText({
     model: openrouter(modelId),
     system: systemPrompt,
-    messages,
+    messages: normalizedMessages,
     onFinish: async ({ response }) => {
       // Save conversation to database
       try {
@@ -91,9 +125,16 @@ Remember: In plan mode, you are ONLY planning, not executing. The user will clic
               conversation_id: conversation.id,
               workspace_id: workspaceId,
               role: 'assistant',
-              content: response.messages.map((m: any) =>
-                typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
-              ).join('\n')
+              content: response.messages.map((m: any) => {
+                if (typeof m.content === 'string') return m.content
+                if (Array.isArray(m.content)) {
+                  return m.content
+                    .filter((p: any) => p.type === 'text' && p.text)
+                    .map((p: any) => p.text)
+                    .join('')
+                }
+                return ''
+              }).join('\n')
             }
           ])
         }

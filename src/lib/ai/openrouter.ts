@@ -5,6 +5,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 export const openrouter = createOpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
   apiKey: process.env.OPENROUTER_API_KEY,
+  compatibility: 'strict', // Force standard Chat Completions API format (not Responses API)
   headers: {
     'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://ernest.app',
     'X-Title': process.env.OPENROUTER_SITE_NAME || 'Ernest',

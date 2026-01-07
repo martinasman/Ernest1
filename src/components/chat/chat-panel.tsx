@@ -20,16 +20,27 @@ interface Message {
   createdAt?: string
 }
 
-// Parse streaming response content - handles NDJSON, JSON array, or plain text
+// Parse streaming response content - handles plain text, NDJSON, or JSON array
 function parseStreamContent(rawContent: string): string {
-  // Try to parse as JSON array first (non-streaming response format)
+  if (!rawContent) return ''
+
+  const trimmed = rawContent.trim()
+
+  // Plain text check FIRST - if it doesn't look like JSON, return immediately
+  // This is the common case with compatibility: 'strict'
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return rawContent
+  }
+
+  // Try to parse as JSON array (non-streaming response format)
   try {
     const arr = JSON.parse(rawContent)
     if (Array.isArray(arr)) {
-      return arr
+      const extracted = arr
         .filter((p: any) => (p.type === 'text' || p.type === 'text-delta') && p.text)
         .map((p: any) => p.text)
         .join('')
+      if (extracted) return extracted
     }
   } catch {
     // Not a complete JSON array - try NDJSON or fallback parsing
@@ -38,12 +49,10 @@ function parseStreamContent(rawContent: string): string {
   // Try to parse as NDJSON (newline-delimited JSON)
   const lines = rawContent.split('\n').filter(Boolean)
   let extracted = ''
-  let foundJson = false
 
   for (const line of lines) {
     try {
       const part = JSON.parse(line)
-      foundJson = true
       if ((part.type === 'text-delta' || part.type === 'text') && part.text) {
         extracted += part.text
       }
@@ -52,43 +61,25 @@ function parseStreamContent(rawContent: string): string {
     }
   }
 
-  // If we found and parsed JSON, use extracted content
-  if (foundJson && extracted) {
-    return extracted
-  }
+  if (extracted) return extracted
 
-  // Fallback: if content looks like JSON array, try to extract text blocks from it
-  if (rawContent.trim().startsWith('[') && rawContent.trim().endsWith(']')) {
-    try {
-      // Try to extract text content from malformed JSON array
-      const textMatches = rawContent.match(/"text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)
-      if (textMatches && textMatches.length > 0) {
-        const textValues = textMatches.map(match => {
-          const jsonMatch = match.match(/"text"\s*:\s*"(.*)"$/)
-          if (jsonMatch) {
-            // Unescape JSON string
-            return jsonMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
-          }
-          return ''
-        }).filter(t => t.length > 0)
-
-        // Filter out empty text blocks (from reasoning) and join the rest
-        const meaningfulText = textValues.filter(t => t.trim().length > 0)
-        if (meaningfulText.length > 0) {
-          return meaningfulText.join('')
+  // Fallback: try regex extraction from JSON-like content
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+    const textMatches = rawContent.match(/"text"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/g)
+    if (textMatches && textMatches.length > 0) {
+      const textValues = textMatches.map(match => {
+        const jsonMatch = match.match(/"text"\s*:\s*"(.*)"$/)
+        if (jsonMatch) {
+          return jsonMatch[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\\n/g, '\n')
         }
-      }
-    } catch {
-      // If extraction fails, fall through to raw content return
+        return ''
+      }).filter(t => t.trim().length > 0)
+
+      if (textValues.length > 0) return textValues.join('')
     }
   }
 
-  // Fall back to raw content only if it's not JSON
-  if (!rawContent.trim().startsWith('{') && !rawContent.trim().startsWith('[')) {
-    return rawContent
-  }
-
-  // If content is unparseable JSON, return empty string to avoid showing raw JSON to user
+  // Last resort: return empty to avoid showing raw JSON
   return ''
 }
 
@@ -832,7 +823,7 @@ Please proceed with implementing this plan step by step. Execute all the actions
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <p className="text-base text-gray-300 leading-relaxed break-words whitespace-pre-wrap max-w-full">
+                    <p className="text-sm text-gray-300 leading-relaxed break-words whitespace-pre-wrap max-w-full">
                       <MessageContent content={message.content} />
                     </p>
                     {message.todos && message.todos.length > 0 && (
@@ -1007,7 +998,23 @@ function SuggestionButton({ children, onClick }: { children: React.ReactNode; on
 function MessageContent({ content }: { content: string }) {
   if (!content) return null
 
-  const parts = content.split(/(\*\*.*?\*\*|\n)/g)
+  // Safety: handle raw JSON that may have been saved to database incorrectly
+  let cleanContent = content
+  if (content.trim().startsWith('[') && content.includes('"type":"text"')) {
+    try {
+      const arr = JSON.parse(content)
+      if (Array.isArray(arr)) {
+        cleanContent = arr
+          .filter((p: any) => p.type === 'text' && p.text)
+          .map((p: any) => p.text)
+          .join('')
+      }
+    } catch {
+      // If parsing fails, use original content
+    }
+  }
+
+  const parts = cleanContent.split(/(\*\*.*?\*\*|\n)/g)
 
   return (
     <>
