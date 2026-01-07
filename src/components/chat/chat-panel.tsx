@@ -102,6 +102,7 @@ async function readStreamWithTimeout(
 export function ChatPanel() {
   const { workspace, refetch } = useWorkspace()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const hydratedWorkspaceIdRef = useRef<string | null>(null)
   const [localMessages, setLocalMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -595,6 +596,11 @@ Please proceed with implementing this plan step by step. Execute all the actions
 
   // Hydrate chat from database first, then localStorage as fallback
   useEffect(() => {
+    // Clear messages immediately when workspace changes to prevent cross-contamination
+    setStoreMessages([])
+    setLocalMessages([])
+    hydratedWorkspaceIdRef.current = null
+
     if (!workspace?.id) return
 
     let isCancelled = false
@@ -620,6 +626,7 @@ Please proceed with implementing this plan step by step. Execute all the actions
           }))
           setStoreMessages(normalized)
           setLocalMessages([])
+          hydratedWorkspaceIdRef.current = workspace.id
 
           // Cache to localStorage for faster subsequent loads
           try {
@@ -639,15 +646,18 @@ Please proceed with implementing this plan step by step. Execute all the actions
               }))
               setStoreMessages(normalized as any)
               setLocalMessages([])
+              hydratedWorkspaceIdRef.current = workspace.id
             } catch (err) {
               console.error('Failed to parse localStorage', err)
               setStoreMessages([])
               setLocalMessages([])
               window.localStorage.removeItem(key)
+              hydratedWorkspaceIdRef.current = workspace.id
             }
           } else {
             setStoreMessages([])
             setLocalMessages([])
+            hydratedWorkspaceIdRef.current = workspace.id
           }
         }
       } catch (err) {
@@ -659,13 +669,16 @@ Please proceed with implementing this plan step by step. Execute all the actions
             const parsed = JSON.parse(raw)
             setStoreMessages(parsed)
             setLocalMessages([])
+            hydratedWorkspaceIdRef.current = workspace.id
           } catch {
             setStoreMessages([])
             setLocalMessages([])
+            hydratedWorkspaceIdRef.current = workspace.id
           }
         } else {
           setStoreMessages([])
           setLocalMessages([])
+          hydratedWorkspaceIdRef.current = workspace.id
         }
       }
     }
@@ -680,6 +693,7 @@ Please proceed with implementing this plan step by step. Execute all the actions
   // Persist chat history per workspace
   useEffect(() => {
     if (!workspace?.id) return
+    if (hydratedWorkspaceIdRef.current !== workspace.id) return
     const key = `ernest-chat-${workspace.id}`
     try {
       const payload = allMessages.map((m) => ({
